@@ -2,6 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, Alert, TextInput, TouchableOpacity, Modal } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import ICAL from 'ical.js';
+import { CANVAS_CONFIG, buildCanvasUrl } from './config/canvas';
+import { 
+  initializeGoogleAPI, 
+  signInToGoogle, 
+  signOutOfGoogle, 
+  isSignedInToGoogle, 
+  fetchGoogleCalendarEvents,
+  debugGoogleConfig
+} from './config/google';
+import { gapi } from 'gapi-script';
 
 // Sample Canvas ICS feed URL (you can replace this with a real one)
 const SAMPLE_ICS_URL = 'https://canvas.instructure.com/feeds/calendars/user_1234567890.ics';
@@ -9,6 +19,7 @@ const SAMPLE_ICS_URL = 'https://canvas.instructure.com/feeds/calendars/user_1234
 export default function App() {
   const [events, setEvents] = useState({});
   const [studyBlocks, setStudyBlocks] = useState({});
+  const [googleEvents, setGoogleEvents] = useState({});
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newAssignment, setNewAssignment] = useState({
@@ -17,15 +28,137 @@ export default function App() {
     dueDate: '',
     time: '23:59'
   });
+  
+  // Google Calendar state
+  const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [googleApiInitialized, setGoogleApiInitialized] = useState(false);
 
   useEffect(() => {
-    fetchCalendarEvents();
+    console.log('=== App Component Mounted ===');
+    
+    // Test if Google API script is loaded
+    console.log('Testing Google API script loading...');
+    console.log('window.gapi exists:', Boolean(window.gapi));
+    console.log('window.gapi.load exists:', Boolean(window.gapi?.load));
+    
+    // Debug Google configuration
+    debugGoogleConfig();
+    
+    // Initialize Google API
+    initializeGoogleAPI()
+      .then(() => {
+        setGoogleApiInitialized(true);
+        setIsGoogleSignedIn(isSignedInToGoogle());
+        console.log('✅ Google API initialized successfully');
+        console.log('Auth instance available:', Boolean(window.gapi?.auth2));
+      })
+      .catch((error) => {
+        console.error('❌ Failed to initialize Google API:', error);
+        Alert.alert(
+          'Google Calendar Setup Required', 
+          `Please configure Google Calendar integration:\n\n${error.message}\n\nCheck the console for detailed setup instructions.`
+        );
+      });
+
+    // Fetch Canvas events
+    fetchCalendarEvents().catch((err) => {
+      console.error("Fallback to sample data due to error:", err);
+      loadSampleData();
+    });
   }, []);
 
   const fetchCalendarEvents = async () => {
     try {
-      // For demo purposes, we'll use a sample ICS content instead of fetching from URL
-      const sampleICSContent = `BEGIN:VCALENDAR
+      console.log('Fetching Canvas calendar events...');
+      
+      // Fetch calendar events from Canvas API
+      const calendarUrl = buildCanvasUrl(CANVAS_CONFIG.endpoints.calendarEvents, {
+        start_date: new Date().toISOString().split('T')[0],
+        end_date: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] // Next 90 days
+      });
+      
+      console.log('Canvas API URL:', calendarUrl);
+      
+      const response = await fetch(calendarUrl, {
+        headers: {
+          'Authorization': `Bearer ${CANVAS_CONFIG.apiToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Canvas API error: ${response.status} ${response.statusText}`);
+      }
+      
+      const canvasEvents = await response.json();
+      console.log('Canvas events received:', canvasEvents.length);
+      console.log('First Canvas event:', JSON.stringify(canvasEvents[0], null, 2));
+      
+      const parsedEvents = {};
+      const generatedStudyBlocks = {};
+
+      canvasEvents.forEach(event => {
+        // Only process assignment events
+        if (event.type === 'assignment' || event.assignment_id) {
+          // Use multiple possible due date fields in order of preference
+          const dueDateTime = event.assignment?.due_at || event.end_at || event.start_at;
+          const dueDate = new Date(dueDateTime).toISOString().split('T')[0];
+          
+          // Add assignment to events
+          parsedEvents[dueDate] = {
+            ...parsedEvents[dueDate],
+            assignments: [
+              ...(parsedEvents[dueDate]?.assignments || []),
+              {
+                title: event.title || event.name,
+                description: event.description || 'Assignment due',
+                time: new Date(dueDateTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                type: 'assignment',
+                courseName: event.context_name || event.assignment?.course_id || 'Course'
+              }
+            ]
+          };
+
+          // Generate study block for the day before using the same dueDateTime
+          const studyDate = new Date(dueDateTime);
+          studyDate.setDate(studyDate.getDate() - 1);
+          const studyDateKey = studyDate.toISOString().split('T')[0];
+          
+          generatedStudyBlocks[studyDateKey] = {
+            ...generatedStudyBlocks[studyDateKey],
+            studyBlocks: [
+              ...(generatedStudyBlocks[studyDateKey]?.studyBlocks || []),
+              {
+                title: `Study for ${event.title || event.name}`,
+                time: '19:00',
+                duration: '1 hour',
+                type: 'study'
+              }
+            ]
+          };
+        }
+      });
+
+      console.log('Parsed events:', Object.keys(parsedEvents).length);
+      console.log('Generated study blocks:', Object.keys(generatedStudyBlocks).length);
+
+      setEvents(parsedEvents);
+      setStudyBlocks(generatedStudyBlocks);
+      
+      Alert.alert('Success', `Loaded ${canvasEvents.length} events from Canvas!`);
+      
+    } catch (error) {
+      console.error('Error fetching Canvas events:', error);
+      Alert.alert('Error', `Failed to load Canvas events: ${error.message}`);
+      console.log("Loading sample data after Canvas fetch error...");
+      loadSampleData();
+    }
+  };
+
+  const loadSampleData = () => {
+    console.log('Loading sample data as fallback...');
+    const sampleICSContent = `BEGIN:VCALENDAR
 VERSION:2.0
 PRODID:-//Canvas LMS//NONSGML v1.0//EN
 BEGIN:VEVENT
@@ -51,56 +184,188 @@ LOCATION:Online
 END:VEVENT
 END:VCALENDAR`;
 
-      const jcalData = ICAL.parse(sampleICSContent);
-      const comp = new ICAL.Component(jcalData);
-      const vevents = comp.getAllSubcomponents('vevent');
+    const jcalData = ICAL.parse(sampleICSContent);
+    const comp = new ICAL.Component(jcalData);
+    const vevents = comp.getAllSubcomponents('vevent');
+
+    const parsedEvents = {};
+    const generatedStudyBlocks = {};
+
+    vevents.forEach(vevent => {
+      const event = new ICAL.Event(vevent);
+      // Use the same assignment parsing structure as fetchCalendarEvents
+      // Check for possible due date fields in order: event.assignment?.due_at, event.end_at, event.start_at
+      // For ICS, we only have DTSTART and DTEND, so simulate as if they are like start_at and end_at
+      // This allows consistent logic for both Canvas and ICS sample events
+      const start_at = event.startDate ? event.startDate.toJSDate() : null;
+      const end_at = event.endDate ? event.endDate.toJSDate() : null;
+      // Simulate Canvas "assignment" object (not present in ICS, so undefined)
+      const assignment_due_at = undefined;
+      // Choose due date time in order of preference
+      const dueDateTime =
+        assignment_due_at ||
+        (end_at ? end_at.toISOString() : null) ||
+        (start_at ? start_at.toISOString() : null);
+      // If no dueDateTime fallback to start_at
+      const useDate = dueDateTime
+        ? new Date(dueDateTime)
+        : (start_at || new Date());
+      const dateKey = useDate.toISOString().split('T')[0];
+
+      parsedEvents[dateKey] = {
+        ...parsedEvents[dateKey],
+        assignments: [
+          ...(parsedEvents[dateKey]?.assignments || []),
+          {
+            title: event.summary,
+            description: event.description || 'Assignment due',
+            time: useDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            type: 'assignment',
+            courseName: event.component.getFirstPropertyValue('LOCATION') || 'Course'
+          }
+        ]
+      };
+
+      // Generate study block for the day before using the same dueDateTime
+      const studyDate = new Date(useDate);
+      studyDate.setDate(studyDate.getDate() - 1);
+      const studyDateKey = studyDate.toISOString().split('T')[0];
+
+      generatedStudyBlocks[studyDateKey] = {
+        ...generatedStudyBlocks[studyDateKey],
+        studyBlocks: [
+          ...(generatedStudyBlocks[studyDateKey]?.studyBlocks || []),
+          {
+            title: `Study for ${event.summary}`,
+            time: '19:00',
+            duration: '1 hour',
+            type: 'study',
+            courseName: event.component.getFirstPropertyValue('LOCATION') || 'Course'
+          }
+        ]
+      };
+    });
+
+    setEvents(parsedEvents);
+    setStudyBlocks(generatedStudyBlocks);
+  };
+
+  // Google Calendar Functions
+  const handleGoogleSignIn = async () => {
+    console.log('🔵 Google login button clicked');
+    
+    if (!googleApiInitialized) {
+      const error = 'Google API not initialized. Please refresh the page and check console for setup instructions.';
+      console.error('❌', error);
+      Alert.alert('Setup Required', error);
+      return;
+    }
+
+    setIsGoogleLoading(true);
+    try {
+      if (isGoogleSignedIn) {
+        // If already signed in, just refresh events
+        console.log('Already signed in, refreshing events...');
+        await fetchGoogleCalendarEventsData();
+        Alert.alert('Success', 'Google Calendar events refreshed!');
+      } else {
+        // Sign in and fetch events
+        console.log('Attempting Google sign-in...');
+        await signInToGoogle();
+        setIsGoogleSignedIn(true);
+        console.log('Sign-in successful, fetching events...');
+        await fetchGoogleCalendarEventsData();
+        Alert.alert('Success', 'Connected to Google Calendar!');
+      }
+    } catch (error) {
+      console.error('❌ Google sign-in error:', error);
       
-      const parsedEvents = {};
-      const generatedStudyBlocks = {};
+      // Provide specific error messages
+      let errorMessage = 'Failed to connect to Google Calendar';
+      if (error.error === 'idpiframe_initialization_failed') {
+        errorMessage = 'Google sign-in failed: Please check your internet connection and try again.';
+      } else if (error.error === 'invalid_client') {
+        errorMessage = 'Google Client ID is invalid. Please check your Google Cloud Console configuration.';
+      } else if (error.message?.includes('Client ID not configured')) {
+        errorMessage = 'Google Client ID not configured. Please set EXPO_PUBLIC_GOOGLE_CLIENT_ID in your .env file.';
+      } else if (error.message?.includes('Google API script not loaded')) {
+        errorMessage = 'Google API script not loaded. Please check your app.json configuration.';
+      } else {
+        errorMessage = `Failed to connect to Google Calendar: ${error.message || error.error || 'Unknown error'}`;
+      }
+      
+      Alert.alert('Google Calendar Error', errorMessage);
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
 
-      vevents.forEach(vevent => {
-        const event = new ICAL.Event(vevent);
-        const startDate = event.startDate.toJSDate();
-        const dateKey = startDate.toISOString().split('T')[0];
-        
-        // Add assignment to events
-        parsedEvents[dateKey] = {
-          ...parsedEvents[dateKey],
-          assignments: [
-            ...(parsedEvents[dateKey]?.assignments || []),
-            {
-              title: event.summary,
-              description: event.description,
-              time: startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              type: 'assignment'
-            }
-          ]
-        };
+  const handleGoogleSignOut = async () => {
+    try {
+      await signOutOfGoogle();
+      setIsGoogleSignedIn(false);
+      setGoogleEvents({});
+      Alert.alert('Success', 'Disconnected from Google Calendar');
+    } catch (error) {
+      console.error('Google sign-out error:', error);
+      Alert.alert('Error', `Failed to disconnect: ${error.message}`);
+    }
+  };
 
-        // Generate study block for the day before
-        const studyDate = new Date(startDate);
-        studyDate.setDate(studyDate.getDate() - 1);
-        const studyDateKey = studyDate.toISOString().split('T')[0];
+  const fetchGoogleCalendarEventsData = async () => {
+    if (!isGoogleSignedIn) {
+      console.log('Not signed in to Google, skipping calendar fetch');
+      return;
+    }
+
+    try {
+      console.log('Fetching Google Calendar events...');
+      
+      const timeMin = new Date().toISOString();
+      const timeMax = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(); // Next 90 days
+      
+      const googleEventsList = await fetchGoogleCalendarEvents(timeMin, timeMax);
+      console.log('Google Calendar events received:', googleEventsList.length);
+      
+      const parsedGoogleEvents = {};
+      
+      googleEventsList.forEach(event => {
+        // Parse start time - handle both date and dateTime
+        const startTime = event.start?.dateTime || event.start?.date;
+        if (!startTime) return;
         
-        generatedStudyBlocks[studyDateKey] = {
-          ...generatedStudyBlocks[studyDateKey],
-          studyBlocks: [
-            ...(generatedStudyBlocks[studyDateKey]?.studyBlocks || []),
+        const eventDate = new Date(startTime);
+        const dateKey = eventDate.toISOString().split('T')[0];
+        
+        // Parse end time
+        const endTime = event.end?.dateTime || event.end?.date;
+        const endDate = endTime ? new Date(endTime) : eventDate;
+        
+        // Add Google event to parsed events
+        parsedGoogleEvents[dateKey] = {
+          ...parsedGoogleEvents[dateKey],
+          googleEvents: [
+            ...(parsedGoogleEvents[dateKey]?.googleEvents || []),
             {
-              title: `Study for ${event.summary}`,
-              time: '19:00',
-              duration: '1 hour',
-              type: 'study'
+              title: event.summary || 'Google Event',
+              description: event.description || '',
+              time: eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              endTime: endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              type: 'google',
+              location: event.location || '',
+              htmlLink: event.htmlLink || '',
+              id: event.id
             }
           ]
         };
       });
 
-      setEvents(parsedEvents);
-      setStudyBlocks(generatedStudyBlocks);
+      console.log('Parsed Google events:', Object.keys(parsedGoogleEvents).length);
+      setGoogleEvents(parsedGoogleEvents);
+      
     } catch (error) {
-      console.error('Error parsing ICS:', error);
-      Alert.alert('Error', 'Failed to load calendar events');
+      console.error('Error fetching Google Calendar events:', error);
+      Alert.alert('Error', `Failed to load Google Calendar events: ${error.message}`);
     }
   };
 
@@ -151,6 +416,37 @@ END:VCALENDAR`;
       }
     });
 
+    // Mark dates with Google Calendar events
+    Object.keys(googleEvents).forEach(date => {
+      if (marked[date]) {
+        // Add Google Calendar dot to existing dots
+        if (marked[date].dots) {
+          marked[date].dots.push({ key: 'google', color: '#2196f3' });
+        } else {
+          marked[date].dots = [
+            { key: 'assignment', color: '#ff6b6b' },
+            { key: 'google', color: '#2196f3' }
+          ];
+        }
+        marked[date].customStyles.container.backgroundColor = '#e3f2fd';
+      } else {
+        marked[date] = {
+          marked: true,
+          dotColor: '#2196f3',
+          customStyles: {
+            container: {
+              backgroundColor: '#e3f2fd',
+              borderRadius: 8,
+            },
+            text: {
+              color: '#1976d2',
+              fontWeight: 'bold',
+            },
+          },
+        };
+      }
+    });
+
     // Mark selected date
     if (selectedDate) {
       marked[selectedDate] = {
@@ -167,7 +463,8 @@ END:VCALENDAR`;
   const getEventsForSelectedDate = () => {
     const dateEvents = events[selectedDate]?.assignments || [];
     const dateStudyBlocks = studyBlocks[selectedDate]?.studyBlocks || [];
-    return [...dateEvents, ...dateStudyBlocks];
+    const dateGoogleEvents = googleEvents[selectedDate]?.googleEvents || [];
+    return [...dateEvents, ...dateStudyBlocks, ...dateGoogleEvents];
   };
 
   const addNewAssignment = () => {
@@ -232,12 +529,40 @@ END:VCALENDAR`;
     <View style={styles.container}>
       <Text style={styles.title}>Study Calendar</Text>
       
-      <TouchableOpacity 
-        style={styles.addButton}
-        onPress={() => setShowAddModal(true)}
-      >
-        <Text style={styles.addButtonText}>+ Add Assignment</Text>
-      </TouchableOpacity>
+      <View style={styles.buttonContainer}>
+        <TouchableOpacity 
+          style={[styles.addButton, styles.refreshButton]}
+          onPress={fetchCalendarEvents}
+        >
+          <Text style={styles.addButtonText}>🔄 Refresh Canvas</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={styles.addButton}
+          onPress={() => setShowAddModal(true)}
+        >
+          <Text style={styles.addButtonText}>+ Add Assignment</Text>
+        </TouchableOpacity>
+        
+        {!isGoogleSignedIn ? (
+          <TouchableOpacity 
+            style={[styles.addButton, styles.googleButton]}
+            onPress={handleGoogleSignIn}
+            disabled={!googleApiInitialized || isGoogleLoading}
+          >
+            <Text style={styles.addButtonText}>
+              {isGoogleLoading ? '⏳ Loading...' : '📅 Connect Google Calendar'}
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity 
+            style={[styles.addButton, styles.googleButton, styles.googleSignedInButton]}
+            onPress={handleGoogleSignOut}
+          >
+            <Text style={styles.addButtonText}>📅 Disconnect Google</Text>
+          </TouchableOpacity>
+        )}
+      </View>
       
       <Calendar
         style={styles.calendar}
@@ -281,23 +606,35 @@ END:VCALENDAR`;
               key={index} 
               style={[
                 styles.eventItem,
-                event.type === 'assignment' ? styles.assignmentEvent : styles.studyEvent
+                event.type === 'assignment' ? styles.assignmentEvent : 
+                event.type === 'study' ? styles.studyEvent : 
+                styles.googleEvent
               ]}
             >
               <Text style={styles.eventTitle}>{event.title}</Text>
-              <Text style={styles.eventTime}>{event.time}</Text>
+              <Text style={styles.eventTime}>
+                {event.time}
+                {event.endTime && event.type === 'google' && ` - ${event.endTime}`}
+              </Text>
               {event.description && (
                 <Text style={styles.eventDescription}>{event.description}</Text>
+              )}
+              {event.location && event.type === 'google' && (
+                <Text style={styles.eventLocation}>📍 {event.location}</Text>
               )}
               {event.duration && (
                 <Text style={styles.eventDuration}>Duration: {event.duration}</Text>
               )}
               <View style={[
                 styles.eventTypeBadge,
-                event.type === 'assignment' ? styles.assignmentBadge : styles.studyBadge
+                event.type === 'assignment' ? styles.assignmentBadge : 
+                event.type === 'study' ? styles.studyBadge : 
+                styles.googleBadge
               ]}>
                 <Text style={styles.eventTypeText}>
-                  {event.type === 'assignment' ? 'Assignment' : 'Study Block'}
+                  {event.type === 'assignment' ? 'Assignment' : 
+                   event.type === 'study' ? 'Study Block' : 
+                   'Google Event'}
                 </Text>
               </View>
             </View>
@@ -425,6 +762,10 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: '#4caf50',
   },
+  googleEvent: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#2196f3',
+  },
   eventTitle: {
     fontSize: 16,
     fontWeight: 'bold',
@@ -447,6 +788,12 @@ const styles = StyleSheet.create({
     color: '#888',
     marginBottom: 8,
   },
+  eventLocation: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 8,
+    fontStyle: 'italic',
+  },
   eventTypeBadge: {
     alignSelf: 'flex-start',
     paddingHorizontal: 8,
@@ -459,19 +806,37 @@ const styles = StyleSheet.create({
   studyBadge: {
     backgroundColor: '#e8f5e8',
   },
+  googleBadge: {
+    backgroundColor: '#e3f2fd',
+  },
   eventTypeText: {
     fontSize: 12,
     fontWeight: 'bold',
     color: '#333',
+  },
+  buttonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    marginBottom: 16,
   },
   addButton: {
     backgroundColor: '#2196f3',
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 8,
-    marginHorizontal: 16,
-    marginBottom: 16,
     alignItems: 'center',
+    flex: 1,
+    marginHorizontal: 4,
+  },
+  refreshButton: {
+    backgroundColor: '#4caf50',
+  },
+  googleButton: {
+    backgroundColor: '#2196f3',
+  },
+  googleSignedInButton: {
+    backgroundColor: '#4caf50',
   },
   addButtonText: {
     color: '#ffffff',
