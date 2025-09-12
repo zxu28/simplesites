@@ -6,7 +6,7 @@ A simple React Native (Expo) mobile app that helps students manage their assignm
 
 ### 📅 Calendar View
 - Interactive calendar with visual indicators
-- Color-coded events (assignments in red, study blocks in green)
+- Color-coded events (assignments in red, study blocks in green, Google Calendar events in blue)
 - Tap any date to view events for that day
 
 ### 📚 Assignment Management
@@ -18,6 +18,11 @@ A simple React Native (Expo) mobile app that helps students manage their assignm
 - Automatically generates 1-hour study blocks
 - Places study sessions the day before each assignment due date
 - Helps students prepare in advance
+
+### 📅 Google Calendar Integration
+- Connect to Google Calendar with OAuth2 authentication
+- Fetch and display Google Calendar events
+- Merge Google events with Canvas assignments and study blocks
 
 ### 🎨 Clean UI
 - Modern, intuitive design
@@ -49,6 +54,30 @@ A simple React Native (Expo) mobile app that helps students manage their assignm
    - Or run `npm run ios` / `npm run android` for simulators
    - Or run `npm run web` for web version
 
+## Google Calendar Setup
+
+To use Google Calendar integration:
+
+1. **Create Google Cloud Project:**
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a new project or select existing one
+   - Enable Google Calendar API
+
+2. **Create OAuth2 Credentials:**
+   - Go to "Credentials" → "Create Credentials" → "OAuth 2.0 Client IDs"
+   - Set application type to "Web application"
+   - Add authorized JavaScript origins: `http://localhost:8082`
+   - Copy the Client ID
+
+3. **Configure Environment Variables:**
+   - Create `.env` file in the project root
+   - Add: `EXPO_PUBLIC_GOOGLE_CLIENT_ID=your_client_id_here`
+
+4. **Test Integration:**
+   - Run the app and click "Connect Google Calendar"
+   - Sign in with your Google account
+   - Grant calendar access permissions
+
 ## How It Works
 
 ### ICS Feed Parsing
@@ -67,6 +96,7 @@ The app includes sample ICS content that simulates Canvas LMS calendar feeds. In
 ### Event Display
 - **Assignments**: Red indicators, shown on due dates
 - **Study Blocks**: Green indicators, shown the day before assignments
+- **Google Calendar Events**: Blue indicators, shown on their scheduled dates
 - **Selected Date**: Blue highlight for the currently selected date
 
 ## Customization
@@ -96,10 +126,15 @@ All styles are defined in the `styles` object at the bottom of `App.js`. You can
 
 ```
 StudyCalendar/
-├── App.js              # Main application component
-├── package.json         # Dependencies and scripts
-├── app.json            # Expo configuration
-└── README.md           # This file
+├── App.js                      # Main application component
+├── package.json                # Dependencies and scripts
+├── app.json                   # Expo configuration
+├── config/
+│   ├── canvas.js              # Canvas LMS configuration
+│   └── google.js              # Google Calendar configuration
+├── GOOGLE_CALENDAR_SETUP.md   # Google Calendar setup guide
+├── GOOGLE_CALENDAR_DEBUG.md   # Google Calendar debugging guide
+└── README.md                  # This file
 ```
 
 ## Dependencies
@@ -107,6 +142,7 @@ StudyCalendar/
 - **expo**: Expo framework for React Native
 - **react-native-calendars**: Calendar component library
 - **ical.js**: ICS/ICAL file parser
+- **gapi-script**: Google API client library
 - **react-native**: React Native framework
 
 ## Future Enhancements
