@@ -1,170 +1,108 @@
-// Google Calendar Configuration
+// Google Calendar Configuration for Expo
 // IMPORTANT: You need to create OAuth credentials in Google Cloud Console
 // 1. Go to https://console.cloud.google.com/
 // 2. Create a new project or select existing one
 // 3. Enable Google Calendar API
-// 4. Create OAuth 2.0 credentials (Web application)
-// 5. Add http://localhost:8082 to authorized origins (for Expo web)
-// 6. Copy the Client ID and replace the placeholder below
+// 4. Create OAuth 2.0 credentials for:
+//    - Web application (for Expo web)
+//    - iOS application (for iOS builds)
+//    - Android application (for Android builds)
+// 5. Add the following to authorized origins:
+//    - http://localhost:8082 (for Expo web)
+//    - Your iOS bundle identifier
+//    - Your Android package name
+// 6. Copy the Client IDs and set them in your .env file
 
 export const GOOGLE_CONFIG = {
-  clientId: process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID || 'YOUR_GOOGLE_CLIENT_ID_HERE',
-  apiKey: process.env.EXPO_PUBLIC_GOOGLE_API_KEY || 'YOUR_GOOGLE_API_KEY_HERE', // Optional
-  discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest'],
-  scope: 'https://www.googleapis.com/auth/calendar.readonly'
+  // Web client ID (for Expo web)
+  webClientId: process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID || 'YOUR_WEB_CLIENT_ID_HERE',
+  // iOS client ID (for iOS builds)
+  iosClientId: process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS || 'YOUR_IOS_CLIENT_ID_HERE',
+  // Android client ID (for Android builds)
+  androidClientId: process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID || 'YOUR_ANDROID_CLIENT_ID_HERE',
+  // Google Calendar API scope
+  scope: 'https://www.googleapis.com/auth/calendar.readonly',
+  // Google Calendar API base URL
+  calendarApiUrl: 'https://www.googleapis.com/calendar/v3'
 };
 
 // Debug function to check configuration
 export const debugGoogleConfig = () => {
   console.log('=== Google Configuration Debug ===');
-  console.log('Client ID exists:', Boolean(GOOGLE_CONFIG.clientId));
-  console.log('Client ID is placeholder:', GOOGLE_CONFIG.clientId === 'YOUR_GOOGLE_CLIENT_ID_HERE');
-  console.log('API Key exists:', Boolean(GOOGLE_CONFIG.apiKey));
-  console.log('API Key is placeholder:', GOOGLE_CONFIG.apiKey === 'YOUR_GOOGLE_API_KEY_HERE');
-  console.log('Window.gapi exists:', Boolean(typeof window !== 'undefined' && window.gapi));
+  console.log('Web Client ID exists:', Boolean(GOOGLE_CONFIG.webClientId));
+  console.log('Web Client ID is placeholder:', GOOGLE_CONFIG.webClientId === 'YOUR_WEB_CLIENT_ID_HERE');
+  console.log('iOS Client ID exists:', Boolean(GOOGLE_CONFIG.iosClientId));
+  console.log('iOS Client ID is placeholder:', GOOGLE_CONFIG.iosClientId === 'YOUR_IOS_CLIENT_ID_HERE');
+  console.log('Android Client ID exists:', Boolean(GOOGLE_CONFIG.androidClientId));
+  console.log('Android Client ID is placeholder:', GOOGLE_CONFIG.androidClientId === 'YOUR_ANDROID_CLIENT_ID_HERE');
   console.log('==================================');
 };
 
-// Helper function to initialize Google API
-export const initializeGoogleAPI = () => {
-  return new Promise((resolve, reject) => {
-    console.log('Initializing Google API...');
-    
-    // Debug configuration
-    debugGoogleConfig();
-    
-    // Check if we have a valid client ID
-    if (GOOGLE_CONFIG.clientId === 'YOUR_GOOGLE_CLIENT_ID_HERE') {
-      const error = 'Google Client ID not configured. Please set EXPO_PUBLIC_GOOGLE_CLIENT_ID in your .env file or update config/google.js';
-      console.error(error);
-      reject(new Error(error));
-      return;
-    }
-    
-    // Check if gapi is available
-    if (typeof window === 'undefined') {
-      const error = 'Window object not available (not in browser environment)';
-      console.error(error);
-      reject(new Error(error));
-      return;
-    }
-    
-    if (!window.gapi) {
-      const error = 'Google API script not loaded. Check if https://apis.google.com/js/api.js is loaded in app.json';
-      console.error(error);
-      reject(new Error(error));
-      return;
-    }
-    
-    console.log('Loading Google API client:auth2...');
-    window.gapi.load('client:auth2', () => {
-      console.log('Google API client:auth2 loaded, initializing...');
-      
-      const initConfig = {
-        clientId: GOOGLE_CONFIG.clientId,
-        discoveryDocs: GOOGLE_CONFIG.discoveryDocs,
-        scope: GOOGLE_CONFIG.scope
-      };
-      
-      // Only add apiKey if it's not a placeholder
-      if (GOOGLE_CONFIG.apiKey && GOOGLE_CONFIG.apiKey !== 'YOUR_GOOGLE_API_KEY_HERE') {
-        initConfig.apiKey = GOOGLE_CONFIG.apiKey;
-      }
-      
-      console.log('Initializing with config:', { ...initConfig, clientId: '***' + initConfig.clientId.slice(-10) });
-      
-      window.gapi.client.init(initConfig).then(() => {
-        console.log('✅ Google API initialized successfully');
-        console.log('Auth instance available:', Boolean(window.gapi.auth2));
-        resolve(window.gapi);
-      }).catch((error) => {
-        console.error('❌ Google API initialization failed:', error);
-        reject(error);
-      });
-    });
-  });
-};
-
-// Helper function to sign in to Google
-export const signInToGoogle = () => {
-  return new Promise((resolve, reject) => {
-    console.log('Attempting Google sign-in...');
-    
-    if (!window.gapi) {
-      const error = 'Google API not loaded';
-      console.error('❌', error);
-      reject(new Error(error));
-      return;
-    }
-    
-    if (!window.gapi.auth2) {
-      const error = 'Google Auth2 not initialized. Call initializeGoogleAPI() first.';
-      console.error('❌', error);
-      reject(new Error(error));
-      return;
-    }
-    
-    const authInstance = window.gapi.auth2.getAuthInstance();
-    if (!authInstance) {
-      const error = 'Auth instance not available';
-      console.error('❌', error);
-      reject(new Error(error));
-      return;
-    }
-    
-    console.log('Calling authInstance.signIn()...');
-    authInstance.signIn().then((googleUser) => {
-      console.log('✅ Google sign-in successful');
-      console.log('User email:', googleUser.getBasicProfile().getEmail());
-      resolve(googleUser);
-    }).catch((error) => {
-      console.error('❌ Google sign-in failed:', error);
-      console.error('Error details:', error.error, error.details);
-      reject(error);
-    });
-  });
-};
-
-// Helper function to sign out of Google
-export const signOutOfGoogle = () => {
-  return new Promise((resolve, reject) => {
-    if (window.gapi && window.gapi.auth2) {
-      const authInstance = window.gapi.auth2.getAuthInstance();
-      authInstance.signOut().then(() => {
-        console.log('Google sign-out successful');
-        resolve();
-      }).catch(reject);
-    } else {
-      reject(new Error('Google Auth not initialized'));
-    }
-  });
-};
-
-// Helper function to check if user is signed in
-export const isSignedInToGoogle = () => {
-  if (window.gapi && window.gapi.auth2) {
-    const authInstance = window.gapi.auth2.getAuthInstance();
-    return authInstance.isSignedIn.get();
-  }
-  return false;
-};
-
-// Helper function to get Google Calendar events
-export const fetchGoogleCalendarEvents = async (timeMin, timeMax) => {
+// Helper function to fetch Google Calendar events using Bearer token
+export const fetchGoogleCalendarEvents = async (accessToken, timeMin, timeMax) => {
   try {
-    const response = await window.gapi.client.calendar.events.list({
-      calendarId: 'primary',
+    console.log('🔄 Fetching Google Calendar events...');
+    console.log('Time range:', { timeMin, timeMax });
+    
+    const url = `${GOOGLE_CONFIG.calendarApiUrl}/calendars/primary/events`;
+    const params = new URLSearchParams({
       timeMin: timeMin,
       timeMax: timeMax,
-      showDeleted: false,
-      singleEvents: true,
+      showDeleted: 'false',
+      singleEvents: 'true',
       orderBy: 'startTime',
-      maxResults: 100
+      maxResults: '100'
     });
-
-    return response.result.items || [];
+    
+    const response = await fetch(`${url}?${params}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      }
+    });
+    
+    console.log('📡 Google Calendar API response status:', response.status);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Google Calendar API error:', response.status, errorText);
+      
+      if (response.status === 401) {
+        throw new Error('Token expired or invalid. Please sign in again.');
+      } else if (response.status === 403) {
+        throw new Error('Google Calendar API not enabled. Please enable it in Google Cloud Console.');
+      } else {
+        throw new Error(`Google Calendar API error: ${response.status} ${errorText}`);
+      }
+    }
+    
+    const data = await response.json();
+    console.log('✅ Google Calendar events fetched:', data.items?.length || 0, 'events');
+    
+    return data.items || [];
   } catch (error) {
-    console.error('Error fetching Google Calendar events:', error);
+    console.error('❌ Error fetching Google Calendar events:', error);
     throw error;
   }
+};
+
+// Helper function to validate configuration
+export const validateGoogleConfig = () => {
+  const errors = [];
+  
+  if (GOOGLE_CONFIG.webClientId === 'YOUR_WEB_CLIENT_ID_HERE') {
+    errors.push('Web Client ID not configured. Set EXPO_PUBLIC_GOOGLE_CLIENT_ID in .env');
+  }
+  
+  if (GOOGLE_CONFIG.iosClientId === 'YOUR_IOS_CLIENT_ID_HERE') {
+    errors.push('iOS Client ID not configured. Set EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS in .env');
+  }
+  
+  if (GOOGLE_CONFIG.androidClientId === 'YOUR_ANDROID_CLIENT_ID_HERE') {
+    errors.push('Android Client ID not configured. Set EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID in .env');
+  }
+  
+  return errors;
 };

@@ -124,3 +124,4 @@ The app will be available at `http://localhost:8082`
 ## License
 
 MIT License - see LICENSE file for details
+

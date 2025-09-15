@@ -27,15 +27,11 @@
     },
     "web": {
       "favicon": "./assets/favicon.png",
-      "bundler": "metro",
-      "head": {
-        "scripts": [
-          "https://apis.google.com/js/api.js"
-        ]
-      }
+      "bundler": "metro"
     },
     "plugins": [
-      "expo-font"
+      "expo-font",
+      "expo-web-browser"
     ],
     "extra": {
       "eas": {
