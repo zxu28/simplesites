@@ -14,7 +14,7 @@ import {
 console.log('📱 App.js loaded successfully');
 
 // Google Apps Script URL for fetching events
-const GOOGLE_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxUY5k3B2ZwkEhD6_3N-eTzsTFD1T6kJKIReN2Nw_2Dcw41wxatOssyvBmNeRcqO7iF/exec";
+const GOOGLE_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby12GiVuGImRqu16g4sOr5h6l-ptx3SqPGhve7H-jhNe8wzIrn8tib3cedPLN3t4F5O/exec";
 
 // Configure WebBrowser for OAuth (only for web)
 if (typeof window !== 'undefined') {
@@ -207,6 +207,40 @@ export default function App() {
     }
   };
 
+  // Categorize events by title keywords
+  const categorizeEvent = (title) => {
+    const titleLower = title.toLowerCase();
+    
+    // Classes
+    if (titleLower.includes('hon') || titleLower.includes('humanities') || 
+        titleLower.includes('math') || titleLower.includes('calculus') || 
+        titleLower.includes('physics') || titleLower.includes('spanish')) {
+      return { category: 'Classes', dotColor: '#1e88e5' };
+    }
+    
+    // Sports/Activities
+    if (titleLower.includes('cross country') || titleLower.includes('ath') || 
+        titleLower.includes('practice')) {
+      return { category: 'Sports/Activities', dotColor: '#43a047' };
+    }
+    
+    // Meetings/Chapel/Advisory
+    if (titleLower.includes('meeting') || titleLower.includes('chapel') || 
+        titleLower.includes('advisor')) {
+      return { category: 'Meetings/Chapel/Advisory', dotColor: '#fdd835' };
+    }
+    
+    // Assignments/Tests
+    if (titleLower.includes('homework') || titleLower.includes('test') || 
+        titleLower.includes('quiz') || titleLower.includes('essay') || 
+        titleLower.includes('project')) {
+      return { category: 'Assignments/Tests', dotColor: '#e53935' };
+    }
+    
+    // Default
+    return { category: 'Other', dotColor: '#9e9e9e' };
+  };
+
   // Fetch Google Apps Script events
   const fetchGoogleEvents = async () => {
     try {
@@ -225,20 +259,31 @@ export default function App() {
         return;
       }
       
-      // Map events to our format
-      const googleEvents = data.map(ev => ({
-        title: ev.title,
-        date: new Date(ev.start).toISOString().split("T")[0],
-        type: "GoogleEvent",
-        dotColor: "#2196f3",
-        description: ev.description || '',
-        time: new Date(ev.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        endTime: ev.end ? new Date(ev.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
-        location: ev.location || '',
-        id: ev.id || Date.now() + Math.random() // Generate unique ID if not provided
-      }));
+      // Map events to our format with categorization
+      const googleEvents = data.map(ev => {
+        const categorization = categorizeEvent(ev.title);
+        return {
+          title: ev.title,
+          date: new Date(ev.start).toISOString().split("T")[0],
+          type: "GoogleEvent",
+          category: categorization.category,
+          dotColor: categorization.dotColor,
+          description: ev.description || '',
+          time: new Date(ev.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          endTime: ev.end ? new Date(ev.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+          location: ev.location || '',
+          id: ev.id || Date.now() + Math.random() // Generate unique ID if not provided
+        };
+      });
+      
+      // Debug logging - breakdown by category
+      const categoryBreakdown = googleEvents.reduce((acc, event) => {
+        acc[event.category] = (acc[event.category] || 0) + 1;
+        return acc;
+      }, {});
       
       console.log(`✅ Fetched ${googleEvents.length} Google events`);
+      console.log('📊 Event breakdown by category:', categoryBreakdown);
       
       // Merge Google events into existing events state
       setGoogleEvents(prevEvents => {
@@ -585,19 +630,22 @@ export default function App() {
         };
       } else if (hasGoogleAppsScriptEvents && hasManualAssignments) {
         // Both Google Apps Script events and manual assignments
+        const googleAppsScriptEvents = dayEvents.filter(event => event.type === 'GoogleEvent');
+        const primaryColor = googleAppsScriptEvents[0]?.dotColor || '#9e9e9e';
+        
         marked[date] = {
           marked: true,
           dots: [
-            { key: 'googleAppsScript', color: '#2196f3' },
+            { key: 'googleAppsScript', color: primaryColor },
             { key: 'assignment', color: '#ff6b6b' }
           ],
           customStyles: {
             container: {
-              backgroundColor: '#e3f2fd',
+              backgroundColor: primaryColor + '20',
               borderRadius: 8,
             },
             text: {
-              color: '#1976d2',
+              color: primaryColor,
               fontWeight: 'bold',
             },
           },
@@ -619,17 +667,21 @@ export default function App() {
           },
         };
       } else if (hasGoogleAppsScriptEvents) {
-        // Only Google Apps Script events
+        // Only Google Apps Script events - use category colors
+        const googleAppsScriptEvents = dayEvents.filter(event => event.type === 'GoogleEvent');
+        const primaryCategory = googleAppsScriptEvents[0]?.category || 'Other';
+        const primaryColor = googleAppsScriptEvents[0]?.dotColor || '#9e9e9e';
+        
         marked[date] = {
           marked: true,
-          dotColor: '#2196f3',
+          dotColor: primaryColor,
           customStyles: {
             container: {
-              backgroundColor: '#e3f2fd',
+              backgroundColor: primaryColor + '20', // Add transparency
               borderRadius: 8,
             },
             text: {
-              color: '#1976d2',
+              color: primaryColor,
               fontWeight: 'bold',
             },
           },
@@ -748,6 +800,14 @@ export default function App() {
           const priorityOrder = { High: 3, Medium: 2, Low: 1 };
           const priorityDiff = priorityOrder[b.priority] - priorityOrder[a.priority];
           if (priorityDiff !== 0) return priorityDiff;
+          return new Date(a.dueDate) - new Date(b.dueDate); // Then by date
+        });
+      case 'category':
+        return assignments.sort((a, b) => {
+          const categoryA = a.category || 'Other';
+          const categoryB = b.category || 'Other';
+          const categoryDiff = categoryA.localeCompare(categoryB);
+          if (categoryDiff !== 0) return categoryDiff;
           return new Date(a.dueDate) - new Date(b.dueDate); // Then by date
         });
       case 'date':
@@ -1002,6 +1062,11 @@ export default function App() {
                         <Text style={styles.priorityBadgeText}>{event.priority}</Text>
                       </View>
                     )}
+                    {event.category && event.type === 'GoogleEvent' && (
+                      <View style={[styles.categoryBadge, { backgroundColor: event.dotColor }]}>
+                        <Text style={styles.categoryBadgeText}>{event.category}</Text>
+                      </View>
+                    )}
                     {event.location && event.type === 'google' && (
                       <Text style={styles.eventLocation}>📍 {event.location}</Text>
                     )}
@@ -1042,6 +1107,7 @@ export default function App() {
                 <Picker.Item label="Class" value="class" />
                 <Picker.Item label="Type" value="type" />
                 <Picker.Item label="Priority" value="priority" />
+                <Picker.Item label="Category" value="category" />
               </Picker>
             </View>
           </View>
@@ -1084,6 +1150,11 @@ export default function App() {
                   {assignment.priority && (
                     <View style={[styles.priorityBadge, { backgroundColor: assignment.dotColorByPriority }]}>
                       <Text style={styles.priorityBadgeText}>{assignment.priority}</Text>
+                    </View>
+                  )}
+                  {assignment.category && assignment.type === 'GoogleEvent' && (
+                    <View style={[styles.categoryBadge, { backgroundColor: assignment.dotColor }]}>
+                      <Text style={styles.categoryBadgeText}>{assignment.category}</Text>
                     </View>
                   )}
                 </View>
@@ -1565,6 +1636,18 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   priorityBadgeText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  categoryBadge: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    marginTop: 8,
+    alignSelf: 'flex-start',
+  },
+  categoryBadgeText: {
     fontSize: 12,
     fontWeight: 'bold',
     color: '#ffffff',
