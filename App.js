@@ -5,6 +5,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import * as AuthSession from 'expo-auth-session';
 import { makeRedirectUri } from 'expo-auth-session';
 import * as Notifications from 'expo-notifications';
+import ICAL from 'ical.js';
 import { 
   GOOGLE_CONFIG,
   debugGoogleConfig,
@@ -15,6 +16,9 @@ console.log('📱 App.js loaded successfully');
 
 // Google Apps Script URL for fetching events
 const GOOGLE_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby12GiVuGImRqu16g4sOr5h6l-ptx3SqPGhve7H-jhNe8wzIrn8tib3cedPLN3t4F5O/exec";
+
+// Canvas ICS feed URL for fetching assignments
+const CANVAS_ICS_URL = "https://pomfret.instructure.com/feeds/calendars/user_U5a3dGrIE7Y45lSX7KUDM87bRYen3k9NWxyuvQOn.ics";
 
 // Configure WebBrowser for OAuth (only for web)
 if (typeof window !== 'undefined') {
@@ -406,6 +410,8 @@ export default function App() {
       setIsGoogleSignedIn(true);
       // Fetch events after successful authentication
       fetchGoogleCalendarEventsData(authentication.accessToken);
+      // Also fetch Canvas events
+      fetchCanvasEvents();
     } else if (response?.type === 'error') {
       console.error('❌ OAuth error response:', response.error);
       Alert.alert('Google OAuth Error', `Failed to connect to Google Calendar: ${response.error?.message || 'Unknown error'}`);
@@ -640,6 +646,120 @@ export default function App() {
       let errorMessage = `Failed to load Google Calendar events: ${error.message}`;
       
       Alert.alert('Google Calendar Error', errorMessage);
+    }
+  };
+
+  const fetchCanvasEvents = async () => {
+    console.log('🔄 fetchCanvasEvents called');
+    
+    try {
+      console.log('🔄 Fetching Canvas ICS feed...');
+      
+      const response = await fetch(CANVAS_ICS_URL, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'text/calendar',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Canvas ICS fetch failed: ${response.status} ${response.statusText}`);
+      }
+
+      const icsData = await response.text();
+      console.log('✅ Canvas ICS data received, length:', icsData.length);
+      
+      // Parse ICS data using ical.js
+      const jcalData = ICAL.parse(icsData);
+      const comp = new ICAL.Component(jcalData);
+      const vevents = comp.getAllSubcomponents('vevent');
+      
+      console.log('📋 Parsed Canvas events:', vevents.length, 'events');
+      
+      // Debug logging: show example events
+      if (vevents.length > 0) {
+        console.log('📋 Example Canvas events:');
+        vevents.slice(0, 3).forEach((vevent, index) => {
+          const event = new ICAL.Event(vevent);
+          console.log(`Canvas Event ${index + 1}:`, {
+            summary: event.summary,
+            startDate: event.startDate?.toJSDate(),
+            endDate: event.endDate?.toJSDate(),
+            description: event.description,
+            location: event.location,
+            uid: event.uid
+          });
+        });
+      }
+      
+      // Convert Canvas events to unified format
+      const canvasEvents = {};
+      let canvasAssignmentCount = 0;
+      
+      vevents.forEach(vevent => {
+        try {
+          const event = new ICAL.Event(vevent);
+          const startDate = event.startDate?.toJSDate();
+          const endDate = event.endDate?.toJSDate();
+          
+          if (!startDate) return;
+          
+          const dateKey = startDate.toISOString().split('T')[0];
+          const eventTitle = event.summary || 'Canvas Assignment';
+          const eventDescription = event.description || '';
+          const eventLocation = event.location || '';
+          
+          // Create Canvas assignment object
+          const canvasAssignment = {
+            title: eventTitle,
+            description: eventDescription,
+            time: startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            endTime: endDate ? endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+            type: 'CanvasAssignment',
+            category: 'Canvas Assignment',
+            dotColor: '#ff9800',
+            location: eventLocation,
+            id: event.uid || `canvas-${Date.now()}-${Math.random()}`,
+            source: 'canvas'
+          };
+          
+          // Add to canvas events structure
+          if (!canvasEvents[dateKey]) {
+            canvasEvents[dateKey] = { assignments: [] };
+          }
+          canvasEvents[dateKey].assignments.push(canvasAssignment);
+          canvasAssignmentCount++;
+          
+        } catch (eventError) {
+          console.warn('⚠️ Error parsing Canvas event:', eventError);
+        }
+      });
+      
+      console.log(`📊 Canvas events parsed: ${canvasAssignmentCount} assignments across ${Object.keys(canvasEvents).length} dates`);
+      
+      // Merge Canvas events into existing googleEvents state
+      setGoogleEvents(prevEvents => {
+        const mergedEvents = { ...prevEvents };
+        
+        Object.keys(canvasEvents).forEach(date => {
+          if (!mergedEvents[date]) {
+            mergedEvents[date] = { assignments: [] };
+          }
+          
+          // Add Canvas assignments to existing assignments for this date
+          mergedEvents[date].assignments = [
+            ...(mergedEvents[date].assignments || []),
+            ...canvasEvents[date].assignments
+          ];
+        });
+        
+        console.log('📊 Merged Canvas events into googleEvents state');
+        return mergedEvents;
+      });
+
+    } catch (error) {
+      console.error('❌ Error fetching Canvas events:', error);
+      Alert.alert('Canvas Error', `Failed to load Canvas assignments: ${error.message}`);
     }
   };
 
@@ -894,7 +1014,7 @@ export default function App() {
     Object.keys(googleEvents).forEach(date => {
       const dayEvents = googleEvents[date]?.assignments || [];
       dayEvents.forEach(event => {
-        if (event.type === 'assignment') {
+        if (event.type === 'assignment' || event.type === 'CanvasAssignment') {
           allAssignments.push({ ...event, dueDate: date });
         }
       });
@@ -1042,12 +1162,13 @@ export default function App() {
         <TouchableOpacity
           style={[styles.addButton, styles.refreshButton]}
           onPress={() => {
-            console.log('🔄 Refresh Google Calendar button clicked');
+            console.log('🔄 Refresh Calendar & Canvas button clicked');
             fetchGoogleCalendarEventsData();
+            fetchCanvasEvents();
           }}
           disabled={!isGoogleSignedIn}
         >
-          <Text style={styles.addButtonText}>🔄 Refresh Google Calendar</Text>
+          <Text style={styles.addButtonText}>🔄 Refresh Calendar & Canvas</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
