@@ -547,8 +547,19 @@ export default function App() {
         console.log('📝 No events found in Google Calendar');
       }
       
-      // Create unified events structure that combines Google Calendar events and manual assignments
-      const unifiedEvents = { ...manualAssignments };
+      // Create unified events structure that preserves existing events and adds Google Calendar events
+      const unifiedEvents = { ...googleEvents };
+      
+      // Add manual assignments to the unified structure
+      Object.keys(manualAssignments).forEach(date => {
+        if (!unifiedEvents[date]) {
+          unifiedEvents[date] = { assignments: [] };
+        }
+        unifiedEvents[date].assignments = [
+          ...(unifiedEvents[date].assignments || []),
+          ...(manualAssignments[date].assignments || [])
+        ];
+      });
       
       // Debug counters
       let canvasAssignmentCount = 0;
@@ -640,6 +651,9 @@ export default function App() {
       
       // Update the unified events state
       setGoogleEvents(unifiedEvents);
+      
+      // Debug logging after merge
+      console.log('📊 googleEvents state after Google Calendar merge:', JSON.stringify(unifiedEvents, null, 2));
 
     } catch (error) {
       console.error('❌ Error fetching Google Calendar events:', error);
@@ -754,6 +768,10 @@ export default function App() {
         });
         
         console.log('📊 Merged Canvas events into googleEvents state');
+        
+        // Debug logging after Canvas merge
+        console.log('📊 googleEvents state after Canvas merge:', JSON.stringify(mergedEvents, null, 2));
+        
         return mergedEvents;
       });
 
