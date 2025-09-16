@@ -13,6 +13,9 @@ import {
 
 console.log('📱 App.js loaded successfully');
 
+// Google Apps Script URL for fetching events
+const GOOGLE_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxUY5k3B2ZwkEhD6_3N-eTzsTFD1T6kJKIReN2Nw_2Dcw41wxatOssyvBmNeRcqO7iF/exec";
+
 // Configure WebBrowser for OAuth (only for web)
 if (typeof window !== 'undefined') {
   try {
@@ -204,6 +207,66 @@ export default function App() {
     }
   };
 
+  // Fetch Google Apps Script events
+  const fetchGoogleEvents = async () => {
+    try {
+      console.log('🔄 Fetching Google Apps Script events...');
+      
+      const response = await fetch(GOOGLE_APPS_SCRIPT_URL);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (!data || !Array.isArray(data)) {
+        console.log('No events found');
+        return;
+      }
+      
+      // Map events to our format
+      const googleEvents = data.map(ev => ({
+        title: ev.title,
+        date: new Date(ev.start).toISOString().split("T")[0],
+        type: "GoogleEvent",
+        dotColor: "#2196f3",
+        description: ev.description || '',
+        time: new Date(ev.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        endTime: ev.end ? new Date(ev.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+        location: ev.location || '',
+        id: ev.id || Date.now() + Math.random() // Generate unique ID if not provided
+      }));
+      
+      console.log(`✅ Fetched ${googleEvents.length} Google events`);
+      
+      // Merge Google events into existing events state
+      setGoogleEvents(prevEvents => {
+        const mergedEvents = { ...prevEvents };
+        
+        googleEvents.forEach(event => {
+          const dateKey = event.date;
+          
+          if (!mergedEvents[dateKey]) {
+            mergedEvents[dateKey] = { assignments: [] };
+          }
+          
+          // Add Google event to the assignments array
+          mergedEvents[dateKey].assignments = [
+            ...(mergedEvents[dateKey].assignments || []),
+            event
+          ];
+        });
+        
+        return mergedEvents;
+      });
+      
+    } catch (error) {
+      console.error('Failed to fetch Google Apps Script events:', error);
+      Alert.alert('Error', 'Failed to load Google Calendar events');
+    }
+  };
+
   // Configure Google OAuth request for any user to login
   const [request, response, promptAsync] = AuthSession.useAuthRequest(
     {
@@ -247,6 +310,9 @@ export default function App() {
     }
     
     console.log('=== App initialization complete ===');
+    
+    // Fetch Google Apps Script events on initial load
+    fetchGoogleEvents();
     
     // Print Google Cloud Console OAuth setup instructions
     console.log('📋 GOOGLE CLOUD CONSOLE OAUTH SETUP INSTRUCTIONS:');
@@ -475,25 +541,31 @@ export default function App() {
     Object.keys(googleEvents).forEach(date => {
       const dayEvents = googleEvents[date]?.assignments || [];
       const hasGoogleEvents = dayEvents.some(event => event.type === 'google');
+      const hasGoogleAppsScriptEvents = dayEvents.some(event => event.type === 'GoogleEvent');
       const hasManualAssignments = dayEvents.some(event => event.type === 'assignment');
       
       const assignmentCount = dayEvents.filter(event => event.type === 'assignment').length;
       const googleEventCount = dayEvents.filter(event => event.type === 'google').length;
+      const googleAppsScriptEventCount = dayEvents.filter(event => event.type === 'GoogleEvent').length;
       
       totalAssignments += assignmentCount;
-      totalGoogleEvents += googleEventCount;
+      totalGoogleEvents += googleEventCount + googleAppsScriptEventCount;
 
       if (assignmentCount > 0) {
         console.log(`📝 Date ${date}: ${assignmentCount} assignment(s)`, 
           dayEvents.filter(event => event.type === 'assignment').map(a => a.title));
       }
       if (googleEventCount > 0) {
-        console.log(`📅 Date ${date}: ${googleEventCount} Google event(s)`, 
+        console.log(`📅 Date ${date}: ${googleEventCount} Google Calendar event(s)`, 
           dayEvents.filter(event => event.type === 'google').map(g => g.title));
+      }
+      if (googleAppsScriptEventCount > 0) {
+        console.log(`🔵 Date ${date}: ${googleAppsScriptEventCount} Google Apps Script event(s)`, 
+          dayEvents.filter(event => event.type === 'GoogleEvent').map(g => g.title));
       }
 
       if (hasGoogleEvents && hasManualAssignments) {
-        // Both Google events and manual assignments
+        // Both Google Calendar events and manual assignments
         marked[date] = {
           marked: true,
           dots: [
@@ -511,8 +583,43 @@ export default function App() {
             },
           },
         };
+      } else if (hasGoogleAppsScriptEvents && hasManualAssignments) {
+        // Both Google Apps Script events and manual assignments
+        marked[date] = {
+          marked: true,
+          dots: [
+            { key: 'googleAppsScript', color: '#2196f3' },
+            { key: 'assignment', color: '#ff6b6b' }
+          ],
+          customStyles: {
+            container: {
+              backgroundColor: '#e3f2fd',
+              borderRadius: 8,
+            },
+            text: {
+              color: '#1976d2',
+              fontWeight: 'bold',
+            },
+          },
+        };
       } else if (hasGoogleEvents) {
-        // Only Google events
+        // Only Google Calendar events
+        marked[date] = {
+          marked: true,
+          dotColor: '#2196f3',
+          customStyles: {
+            container: {
+              backgroundColor: '#e3f2fd',
+              borderRadius: 8,
+            },
+            text: {
+              color: '#1976d2',
+              fontWeight: 'bold',
+            },
+          },
+        };
+      } else if (hasGoogleAppsScriptEvents) {
+        // Only Google Apps Script events
         marked[date] = {
           marked: true,
           dotColor: '#2196f3',
@@ -910,6 +1017,7 @@ export default function App() {
                       <Text style={styles.eventTypeText}>
                         {event.type === 'assignment' ? 'Assignment' :
                          event.type === 'study' ? 'Study Block' :
+                         event.type === 'GoogleEvent' ? 'Google Event' :
                          'Google Event'}
                       </Text>
                     </View>
