@@ -532,6 +532,8 @@ export default function App() {
       
       // Debug counters
       let canvasAssignmentCount = 0;
+      let redEventCount = 0;
+      let keywordCanvasCount = 0;
       let regularGoogleEventCount = 0;
       
       googleEventsList.forEach(event => {
@@ -546,19 +548,28 @@ export default function App() {
         const endTime = event.end?.dateTime || event.end?.date;
         const endDate = endTime ? new Date(endTime) : eventDate;
         
-        // Detect Canvas assignments
-        const isCanvasAssignment = (title, description) => {
+        const eventTitle = event.summary || 'Google Event';
+        const eventDescription = event.description || '';
+        
+        // Primary detection: Check for colorId = '11' (red blocks)
+        const isRedEvent = event.colorId === '11';
+        
+        // Secondary detection: Keyword-based Canvas assignment detection (fallback)
+        const isCanvasByKeyword = (title, description) => {
           const text = `${title || ''} ${description || ''}`.toLowerCase();
           return text.includes('assignment') || text.includes('homework') || 
                  text.includes('quiz') || text.includes('essay') || text.includes('project');
         };
         
-        const eventTitle = event.summary || 'Google Event';
-        const eventDescription = event.description || '';
-        const isCanvas = isCanvasAssignment(eventTitle, eventDescription);
+        // Determine if this is a Canvas assignment
+        const isCanvas = isRedEvent || isCanvasByKeyword(eventTitle, eventDescription);
         
         // Count for debug logging
-        if (isCanvas) {
+        if (isRedEvent) {
+          redEventCount++;
+          canvasAssignmentCount++;
+        } else if (isCanvasByKeyword(eventTitle, eventDescription)) {
+          keywordCanvasCount++;
           canvasAssignmentCount++;
         } else {
           regularGoogleEventCount++;
@@ -579,14 +590,18 @@ export default function App() {
               dotColor: isCanvas ? '#ff9800' : '#2196f3',
               location: event.location || '',
               htmlLink: event.htmlLink || '',
-              id: event.id
+              id: event.id,
+              colorId: event.colorId // Store original colorId for debugging
             }
           ]
         };
       });
       
       // Debug logging for Canvas assignments
-      console.log(`📊 Google Calendar breakdown: ${canvasAssignmentCount} Canvas assignments, ${regularGoogleEventCount} other Google events`);
+      console.log(`📊 Google Calendar breakdown: ${canvasAssignmentCount} total Canvas assignments`);
+      console.log(`🔴 Red events (colorId='11'): ${redEventCount}`);
+      console.log(`📝 Keyword-detected Canvas: ${keywordCanvasCount}`);
+      console.log(`📅 Other Google events: ${regularGoogleEventCount}`);
 
       console.log('📊 Parsed Google events into unified structure:', Object.keys(unifiedEvents).length, 'dates');
       console.log('📋 Total events across all dates:', Object.values(unifiedEvents).reduce((total, dayEvents) => total + (dayEvents.assignments?.length || 0), 0));
