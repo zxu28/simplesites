@@ -530,6 +530,10 @@ export default function App() {
       // Create unified events structure that combines Google Calendar events and manual assignments
       const unifiedEvents = { ...manualAssignments };
       
+      // Debug counters
+      let canvasAssignmentCount = 0;
+      let regularGoogleEventCount = 0;
+      
       googleEventsList.forEach(event => {
         // Parse start time - handle both date and dateTime
         const startTime = event.start?.dateTime || event.start?.date;
@@ -542,17 +546,37 @@ export default function App() {
         const endTime = event.end?.dateTime || event.end?.date;
         const endDate = endTime ? new Date(endTime) : eventDate;
         
+        // Detect Canvas assignments
+        const isCanvasAssignment = (title, description) => {
+          const text = `${title || ''} ${description || ''}`.toLowerCase();
+          return text.includes('assignment') || text.includes('homework') || 
+                 text.includes('quiz') || text.includes('essay') || text.includes('project');
+        };
+        
+        const eventTitle = event.summary || 'Google Event';
+        const eventDescription = event.description || '';
+        const isCanvas = isCanvasAssignment(eventTitle, eventDescription);
+        
+        // Count for debug logging
+        if (isCanvas) {
+          canvasAssignmentCount++;
+        } else {
+          regularGoogleEventCount++;
+        }
+        
         // Add Google event to unified events structure
         unifiedEvents[dateKey] = {
           ...unifiedEvents[dateKey],
           assignments: [
             ...(unifiedEvents[dateKey]?.assignments || []),
             {
-              title: event.summary || 'Google Event',
-              description: event.description || '',
+              title: eventTitle,
+              description: eventDescription,
               time: eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               endTime: endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              type: 'google',
+              type: isCanvas ? 'CanvasAssignment' : 'google',
+              category: isCanvas ? 'Canvas Assignment' : 'Google Event',
+              dotColor: isCanvas ? '#ff9800' : '#2196f3',
               location: event.location || '',
               htmlLink: event.htmlLink || '',
               id: event.id
@@ -560,6 +584,9 @@ export default function App() {
           ]
         };
       });
+      
+      // Debug logging for Canvas assignments
+      console.log(`📊 Google Calendar breakdown: ${canvasAssignmentCount} Canvas assignments, ${regularGoogleEventCount} other Google events`);
 
       console.log('📊 Parsed Google events into unified structure:', Object.keys(unifiedEvents).length, 'dates');
       console.log('📋 Total events across all dates:', Object.values(unifiedEvents).reduce((total, dayEvents) => total + (dayEvents.assignments?.length || 0), 0));
@@ -587,14 +614,16 @@ export default function App() {
       const dayEvents = googleEvents[date]?.assignments || [];
       const hasGoogleEvents = dayEvents.some(event => event.type === 'google');
       const hasGoogleAppsScriptEvents = dayEvents.some(event => event.type === 'GoogleEvent');
+      const hasCanvasAssignments = dayEvents.some(event => event.type === 'CanvasAssignment');
       const hasManualAssignments = dayEvents.some(event => event.type === 'assignment');
       
       const assignmentCount = dayEvents.filter(event => event.type === 'assignment').length;
       const googleEventCount = dayEvents.filter(event => event.type === 'google').length;
       const googleAppsScriptEventCount = dayEvents.filter(event => event.type === 'GoogleEvent').length;
+      const canvasAssignmentCount = dayEvents.filter(event => event.type === 'CanvasAssignment').length;
       
       totalAssignments += assignmentCount;
-      totalGoogleEvents += googleEventCount + googleAppsScriptEventCount;
+      totalGoogleEvents += googleEventCount + googleAppsScriptEventCount + canvasAssignmentCount;
 
       if (assignmentCount > 0) {
         console.log(`📝 Date ${date}: ${assignmentCount} assignment(s)`, 
@@ -607,6 +636,10 @@ export default function App() {
       if (googleAppsScriptEventCount > 0) {
         console.log(`🔵 Date ${date}: ${googleAppsScriptEventCount} Google Apps Script event(s)`, 
           dayEvents.filter(event => event.type === 'GoogleEvent').map(g => g.title));
+      }
+      if (canvasAssignmentCount > 0) {
+        console.log(`📘 Date ${date}: ${canvasAssignmentCount} Canvas assignment(s)`, 
+          dayEvents.filter(event => event.type === 'CanvasAssignment').map(c => c.title));
       }
 
       if (hasGoogleEvents && hasManualAssignments) {
@@ -682,6 +715,47 @@ export default function App() {
             },
             text: {
               color: primaryColor,
+              fontWeight: 'bold',
+            },
+          },
+        };
+      } else if (hasCanvasAssignments && hasManualAssignments) {
+        // Both Canvas assignments and manual assignments
+        const canvasEvents = dayEvents.filter(event => event.type === 'CanvasAssignment');
+        const canvasColor = canvasEvents[0]?.dotColor || '#ff9800';
+        
+        marked[date] = {
+          marked: true,
+          dots: [
+            { key: 'canvas', color: canvasColor },
+            { key: 'assignment', color: '#ff6b6b' }
+          ],
+          customStyles: {
+            container: {
+              backgroundColor: canvasColor + '20',
+              borderRadius: 8,
+            },
+            text: {
+              color: canvasColor,
+              fontWeight: 'bold',
+            },
+          },
+        };
+      } else if (hasCanvasAssignments) {
+        // Only Canvas assignments
+        const canvasEvents = dayEvents.filter(event => event.type === 'CanvasAssignment');
+        const canvasColor = canvasEvents[0]?.dotColor || '#ff9800';
+        
+        marked[date] = {
+          marked: true,
+          dotColor: canvasColor,
+          customStyles: {
+            container: {
+              backgroundColor: canvasColor + '20',
+              borderRadius: 8,
+            },
+            text: {
+              color: canvasColor,
               fontWeight: 'bold',
             },
           },
@@ -1067,6 +1141,11 @@ export default function App() {
                         <Text style={styles.categoryBadgeText}>{event.category}</Text>
                       </View>
                     )}
+                    {event.type === 'CanvasAssignment' && (
+                      <View style={[styles.canvasBadge, { backgroundColor: event.dotColor }]}>
+                        <Text style={styles.canvasBadgeText}>📘 Canvas</Text>
+                      </View>
+                    )}
                     {event.location && event.type === 'google' && (
                       <Text style={styles.eventLocation}>📍 {event.location}</Text>
                     )}
@@ -1082,6 +1161,7 @@ export default function App() {
                       <Text style={styles.eventTypeText}>
                         {event.type === 'assignment' ? 'Assignment' :
                          event.type === 'study' ? 'Study Block' :
+                         event.type === 'CanvasAssignment' ? 'Canvas Assignment' :
                          event.type === 'GoogleEvent' ? 'Google Event' :
                          'Google Event'}
                       </Text>
@@ -1155,6 +1235,11 @@ export default function App() {
                   {assignment.category && assignment.type === 'GoogleEvent' && (
                     <View style={[styles.categoryBadge, { backgroundColor: assignment.dotColor }]}>
                       <Text style={styles.categoryBadgeText}>{assignment.category}</Text>
+                    </View>
+                  )}
+                  {assignment.type === 'CanvasAssignment' && (
+                    <View style={[styles.canvasBadge, { backgroundColor: assignment.dotColor }]}>
+                      <Text style={styles.canvasBadgeText}>📘 Canvas</Text>
                     </View>
                   )}
                 </View>
@@ -1648,6 +1733,18 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   categoryBadgeText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  canvasBadge: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    marginTop: 8,
+    alignSelf: 'flex-start',
+  },
+  canvasBadgeText: {
     fontSize: 12,
     fontWeight: 'bold',
     color: '#ffffff',
