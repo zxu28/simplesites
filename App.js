@@ -493,7 +493,7 @@ export default function App() {
       console.log('📅 Time range:', { timeMin, timeMax });
       
       // Call Google Calendar API directly with user's access token
-      const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&timeMax=${timeMax}&showDeleted=false&singleEvents=true&orderBy=startTime&maxResults=100`;
+      const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&timeMax=${timeMax}&showDeleted=false&singleEvents=true&orderBy=startTime&maxResults=100&fields=items(id,summary,description,start,end,location,htmlLink,colorId)`;
       
       console.log('🌐 API URL:', url);
       
@@ -522,6 +522,20 @@ export default function App() {
       const googleEventsList = data.items || [];
       
       console.log('✅ Google Calendar events received:', googleEventsList.length, 'events');
+      
+      // Log all events before filtering to see their fields
+      console.log('📋 All Google Calendar events (before filtering):');
+      googleEventsList.forEach((event, index) => {
+        console.log(`Event ${index + 1}:`, {
+          summary: event.summary,
+          description: event.description,
+          colorId: event.colorId,
+          start: event.start,
+          end: event.end,
+          location: event.location,
+          htmlLink: event.htmlLink
+        });
+      });
       
       if (googleEventsList.length === 0) {
         console.log('📝 No events found in Google Calendar');
@@ -557,12 +571,24 @@ export default function App() {
         // Secondary detection: Keyword-based Canvas assignment detection (fallback)
         const isCanvasByKeyword = (title, description) => {
           const text = `${title || ''} ${description || ''}`.toLowerCase();
-          return text.includes('assignment') || text.includes('homework') || 
-                 text.includes('quiz') || text.includes('essay') || text.includes('project');
+          return text.includes('hw') || text.includes('homework') || 
+                 text.includes('essay') || text.includes('project') || 
+                 text.includes('paper') || text.includes('quiz') || 
+                 text.includes('assignment');
         };
         
         // Determine if this is a Canvas assignment
         const isCanvas = isRedEvent || isCanvasByKeyword(eventTitle, eventDescription);
+        
+        // Log Canvas assignment detection details
+        if (isCanvas) {
+          console.log(`🎯 Canvas Assignment Detected: "${eventTitle}"`, {
+            isRedEvent,
+            isCanvasByKeyword: isCanvasByKeyword(eventTitle, eventDescription),
+            colorId: event.colorId,
+            detectionMethod: isRedEvent ? 'colorId=11' : 'keyword match'
+          });
+        }
         
         // Count for debug logging
         if (isRedEvent) {
