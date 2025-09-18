@@ -1,32 +1,66 @@
+// ============================================================================
+// IMPORTS AND DEPENDENCIES
+// ============================================================================
+
+// React core - useState for component state management, useEffect for lifecycle
 import React, { useState, useEffect } from 'react';
+
+// React Native UI components for building the interface
 import { View, Text, StyleSheet, ScrollView, Alert, TextInput, TouchableOpacity, Modal, Picker, Platform } from 'react-native';
+
+// Calendar component for displaying the monthly calendar view
 import { Calendar } from 'react-native-calendars';
+
+// Date/time picker for selecting assignment due dates and times
 import DateTimePicker from '@react-native-community/datetimepicker';
+
+// Expo authentication session for Google OAuth integration
 import * as AuthSession from 'expo-auth-session';
 import { makeRedirectUri } from 'expo-auth-session';
+
+// Expo notifications for assignment reminders
 import * as Notifications from 'expo-notifications';
+
+// ICS calendar parser for Canvas assignments
 import ICAL from 'ical.js';
+
+// Google configuration utilities for OAuth setup
 import { 
   GOOGLE_CONFIG,
   debugGoogleConfig,
   validateGoogleConfig
 } from './config/google';
 
+// ============================================================================
+// CONSTANTS AND CONFIGURATION
+// ============================================================================
+
 console.log('📱 App.js loaded successfully');
 
-// Google Apps Script URL for fetching events
+// Google Apps Script URL - This is a custom script that fetches Google Calendar events
+// The script acts as a proxy to avoid CORS issues when calling Google Calendar API
 const GOOGLE_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby12GiVuGImRqu16g4sOr5h6l-ptx3SqPGhve7H-jhNe8wzIrn8tib3cedPLN3t4F5O/exec";
 
-// Canvas ICS feed URL for fetching assignments
+// Canvas ICS feed URL - This is the direct ICS calendar feed from Canvas LMS
+// ICS (iCalendar) is a standard format for calendar data exchange
+// This URL provides all Canvas assignments and events in ICS format
 const CANVAS_ICS_URL = "https://pomfret.instructure.com/feeds/calendars/user_U5a3dGrIE7Y45lSX7KUDM87bRYen3k9NWxyuvQOn.ics";
 
-// Configure WebBrowser for OAuth (only for web)
+// ============================================================================
+// WEBBROWSER CONFIGURATION FOR OAUTH
+// ============================================================================
+
+// Configure WebBrowser for OAuth (only for web platforms)
+// This is needed to handle the OAuth redirect flow properly on web
+// On native platforms (iOS/Android), this is not needed
 if (typeof window !== 'undefined') {
   try {
     const WebBrowser = require('expo-web-browser');
+    // Complete any pending OAuth sessions from previous attempts
     WebBrowser.maybeCompleteAuthSession();
     console.log('✅ WebBrowser configured for OAuth');
   } catch (error) {
+    // This is expected on native platforms where WebBrowser isn't available
     console.warn('⚠️ WebBrowser not available (expected on native):', error.message);
   }
 }
@@ -55,33 +89,59 @@ if (typeof window !== 'undefined') {
  *    - Copy the Client IDs to your .env file
  */
 
+// ============================================================================
+// MAIN APP COMPONENT
+// ============================================================================
+
 export default function App() {
-  // Manual assignments that users can add
+  // ============================================================================
+  // STATE MANAGEMENT - All the data the app needs to track
+  // ============================================================================
+  
+  // Manual assignments that users manually add through the UI
+  // Structure: { "2024-01-15": { assignments: [{ title, description, dueDate, ... }] } }
   const [manualAssignments, setManualAssignments] = useState({});
-  // Google Calendar events
+  
+  // Google Calendar events (includes Google Calendar + Canvas assignments)
+  // This is the main events state that combines all event sources
+  // Structure: { "2024-01-15": { assignments: [{ type, title, description, ... }] } }
   const [googleEvents, setGoogleEvents] = useState({});
+  
+  // Currently selected date on the calendar (YYYY-MM-DD format)
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [currentView, setCurrentView] = useState('calendar'); // 'calendar' or 'list'
-  const [sortBy, setSortBy] = useState('date'); // 'date', 'class', 'type'
+  
+  // Modal visibility states
+  const [showAddModal, setShowAddModal] = useState(false); // Add assignment modal
+  const [showDatePicker, setShowDatePicker] = useState(false); // Date picker modal
+  
+  // View mode: 'calendar' shows monthly calendar, 'list' shows assignment list
+  const [currentView, setCurrentView] = useState('calendar');
+  
+  // Sorting options for the list view: 'date', 'class', 'type', 'priority', 'category'
+  const [sortBy, setSortBy] = useState('date');
+  
+  // Form data for new assignments being created
   const [newAssignment, setNewAssignment] = useState({
-    title: '',
-    description: '',
-    dueDate: '',
-    time: '23:59',
-    course: '',
-    assignmentType: '',
-    priority: 'Medium' // Default priority
+    title: '',           // Assignment title
+    description: '',    // Assignment description
+    dueDate: '',        // Due date (YYYY-MM-DD)
+    time: '23:59',      // Due time (HH:MM)
+    course: '',         // Course name
+    assignmentType: '', // Type of assignment (Homework, Quiz, etc.)
+    priority: 'Medium'  // Priority level (High, Medium, Low)
   });
   
-  // Google Calendar state
-  const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(false);
-  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
-  const [accessToken, setAccessToken] = useState(null);
+  // Google Calendar authentication state
+  const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(false); // OAuth sign-in status
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);   // Loading state for OAuth
+  const [accessToken, setAccessToken] = useState(null);            // OAuth access token
 
-  // Dropdown options for assignments
-  // TODO: Extend these arrays to add more courses or assignment types
+  // ============================================================================
+  // DROPDOWN OPTIONS - Predefined choices for assignment forms
+  // ============================================================================
+  
+  // Course options for the assignment form dropdown
+  // Each option has a display label and a value used in the data
   const courseOptions = [
     { label: 'Select Course', value: '' },
     { label: 'Math', value: 'math' },
@@ -94,6 +154,7 @@ export default function App() {
     { label: 'Other', value: 'other' }
   ];
 
+  // Assignment type options for categorizing assignments
   const assignmentTypeOptions = [
     { label: 'Select Type', value: '' },
     { label: 'Homework', value: 'Homework' },
@@ -101,32 +162,47 @@ export default function App() {
     { label: 'Test', value: 'Test' }
   ];
 
+  // Priority level options for assignment urgency
   const priorityOptions = [
     { label: 'High', value: 'High' },
     { label: 'Medium', value: 'Medium' },
     { label: 'Low', value: 'Low' }
   ];
 
-  // Priority color mapping - change colors here
+  // ============================================================================
+  // UI CONFIGURATION - Colors and visual settings
+  // ============================================================================
+  
+  // Priority color mapping - determines the color of assignment dots based on priority
+  // High priority = Red, Medium = Orange, Low = Green
   const priorityColors = {
-    High: '#e53935',    // Red
-    Medium: '#fb8c00',  // Orange  
-    Low: '#43a047'      // Green
+    High: '#e53935',    // Red - urgent assignments
+    Medium: '#fb8c00',  // Orange - normal priority
+    Low: '#43a047'      // Green - low priority
   };
 
-  // Configure redirect URI for OAuth
+  // ============================================================================
+  // OAUTH CONFIGURATION - Google Calendar authentication setup
+  // ============================================================================
+  
+  // Configure redirect URI for OAuth - where Google redirects after authentication
   const redirectUri = makeRedirectUri({});
   console.log('🔗 OAuth Redirect URI:', redirectUri);
   console.log('🌐 Current Origin:', typeof window !== 'undefined' ? window.location.origin : 'Native');
 
-  // Utility function to compute trigger date - change reminder offsets here
+  // ============================================================================
+  // UTILITY FUNCTIONS - Helper functions for date/time calculations
+  // ============================================================================
+  
+  // Calculate notification trigger date for assignment reminders
+  // Takes due date, days before due date, and hour to send reminder
   const toLocalTriggerDate = (dueDateYYYYMMDD, daysBefore, hour = 17) => {
     const dueDate = new Date(dueDateYYYYMMDD);
     const triggerDate = new Date(dueDate);
     triggerDate.setDate(triggerDate.getDate() - daysBefore);
     triggerDate.setHours(hour, 0, 0, 0);
     
-    // Clamp to future only
+    // Ensure reminder is in the future (not in the past)
     const now = new Date();
     if (triggerDate <= now) {
       triggerDate.setTime(now.getTime() + 60000); // 1 minute from now
@@ -331,6 +407,21 @@ export default function App() {
     }
   );
 
+  // ============================================================================
+  // REACT LIFECYCLE HOOKS - useEffect hooks for app initialization and OAuth
+  // ============================================================================
+  
+  /**
+   * useEffect - App initialization and configuration validation
+   * 
+   * This hook runs once when the app component mounts and:
+   * 1. Logs environment information (platform, environment variables)
+   * 2. Validates Google OAuth configuration
+   * 3. Shows setup instructions if configuration is missing
+   * 4. Fetches initial Google Apps Script events
+   * 
+   * This is the first thing that happens when the app starts.
+   */
   useEffect(() => {
     console.log('✅ App component mounted successfully');
     console.log('=== Environment Check ===');
@@ -382,7 +473,18 @@ export default function App() {
     console.log('==========================================');
   }, []);
 
-  // Handle OAuth response
+  /**
+   * useEffect - OAuth response handling and data fetching
+   * 
+   * This hook runs whenever the OAuth response changes and:
+   * 1. Handles successful OAuth authentication
+   * 2. Stores the access token and updates sign-in state
+   * 3. Fetches Google Calendar events after successful authentication
+   * 4. Fetches Canvas events after successful authentication
+   * 5. Handles OAuth errors and user cancellation
+   * 
+   * This is triggered when the user completes Google OAuth flow.
+   */
   useEffect(() => {
     if (response?.type === 'success') {
       console.log('✅ OAuth response received:', response.type);
@@ -481,10 +583,75 @@ export default function App() {
     }
   };
 
+  // ============================================================================
+  // DATA STRUCTURE EXPLANATION
+  // ============================================================================
+  
+  /**
+   * EVENT DATA STRUCTURE
+   * 
+   * The app uses a unified event structure to store all types of events:
+   * 
+   * googleEvents State Structure:
+   * {
+   *   "2024-01-15": {
+   *     assignments: [
+   *       {
+   *         title: "Math Homework",
+   *         description: "Complete problems 1-20",
+   *         time: "18:00",
+   *         endTime: "19:00",
+   *         type: "assignment" | "CanvasAssignment" | "google" | "GoogleEvent",
+   *         category: "Assignment" | "Canvas Assignment" | "Google Event",
+   *         dotColor: "#ff6b6b" | "#ff9800" | "#2196f3",
+   *         location: "Online",
+   *         id: "unique-event-id",
+   *         source: "canvas" | undefined,
+   *         colorId: "11" | undefined,
+   *         // Additional fields for manual assignments:
+   *         course: "math",
+   *         assignmentType: "Homework",
+   *         priority: "High" | "Medium" | "Low",
+   *         completed: false
+   *       }
+   *     ]
+   *   }
+   * }
+   * 
+   * EVENT TYPES:
+   * - "assignment": Manual assignments created by user (red dots)
+   * - "CanvasAssignment": Canvas assignments from ICS feed (orange dots)
+   * - "google": Google Calendar events (blue dots)
+   * - "GoogleEvent": Google Apps Script events (blue dots)
+   * 
+   * DOT COLORS:
+   * - Manual assignments: #ff6b6b (red)
+   * - Canvas assignments: #ff9800 (orange)
+   * - Google events: #2196f3 (blue)
+   * - Priority-based colors for manual assignments
+   */
+
+  // ============================================================================
+  // DATA FETCHING FUNCTIONS - Functions that retrieve events from external sources
+  // ============================================================================
+  
+  /**
+   * fetchGoogleCalendarEventsData - Fetches events from Google Calendar API
+   * 
+   * This function:
+   * 1. Calls Google Calendar API with OAuth token
+   * 2. Parses Google Calendar events
+   * 3. Detects Canvas assignments (by colorId='11' or keywords)
+   * 4. Merges events with existing state (preserves Canvas events)
+   * 5. Updates the googleEvents state
+   * 
+   * @param {string} token - OAuth access token for Google Calendar API
+   */
   const fetchGoogleCalendarEventsData = async (token = accessToken) => {
     console.log('🔄 fetchGoogleCalendarEventsData called');
     console.log('Token available:', !!token);
     
+    // Check if we have a valid OAuth token
     if (!token) {
       console.log('❌ No access token available, skipping calendar fetch');
       return;
@@ -493,8 +660,9 @@ export default function App() {
     try {
       console.log('🔄 Fetching Google Calendar events...');
       
+      // Set time range for fetching events (next 90 days)
       const timeMin = new Date().toISOString();
-      const timeMax = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(); // Next 90 days
+      const timeMax = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
       
       console.log('📅 Time range:', { timeMin, timeMax });
       
@@ -663,12 +831,26 @@ export default function App() {
     }
   };
 
+  /**
+   * fetchCanvasEvents - Fetches Canvas assignments from ICS feed
+   * 
+   * This function:
+   * 1. Fetches ICS calendar data from Canvas LMS
+   * 2. Parses ICS data using ical.js library
+   * 3. Converts Canvas events to unified format
+   * 4. Merges Canvas events with existing googleEvents state
+   * 5. Preserves existing Google Calendar events
+   * 
+   * Canvas events are automatically marked as type='CanvasAssignment'
+   * with orange dotColor (#ff9800) for visual distinction
+   */
   const fetchCanvasEvents = async () => {
     console.log('🔄 fetchCanvasEvents called');
     
     try {
       console.log('🔄 Fetching Canvas ICS feed...');
       
+      // Fetch ICS calendar data from Canvas LMS
       const response = await fetch(CANVAS_ICS_URL, {
         method: 'GET',
         headers: {
@@ -680,6 +862,7 @@ export default function App() {
         throw new Error(`Canvas ICS fetch failed: ${response.status} ${response.statusText}`);
       }
 
+      // Get the raw ICS data as text
       const icsData = await response.text();
       console.log('✅ Canvas ICS data received, length:', icsData.length);
       
@@ -781,6 +964,27 @@ export default function App() {
     }
   };
 
+  // ============================================================================
+  // CALENDAR DISPLAY FUNCTIONS - Functions that prepare data for calendar rendering
+  // ============================================================================
+  
+  /**
+   * getMarkedDates - Creates marked dates configuration for the calendar component
+   * 
+   * This function analyzes all events in googleEvents and creates visual markers
+   * for the calendar component. It handles different event types with different colors:
+   * 
+   * Event Types and Colors:
+   * - Manual assignments: Red dots (#ff6b6b) - user-created assignments
+   * - Canvas assignments: Orange dots (#ff9800) - from Canvas LMS
+   * - Google Calendar events: Blue dots (#2196f3) - from Google Calendar
+   * - Google Apps Script events: Blue dots (#2196f3) - from Apps Script
+   * 
+   * The function also handles mixed event types on the same date by showing
+   * multiple dots or combining colors appropriately.
+   * 
+   * @returns {Object} Marked dates configuration for react-native-calendars
+   */
   const getMarkedDates = () => {
     const marked = {};
     let totalAssignments = 0;
@@ -788,14 +992,17 @@ export default function App() {
 
     console.log('📅 Rendering calendar - analyzing events for marking...');
 
-    // Mark dates with events (both Google Calendar events and manual assignments)
+    // Analyze each date in googleEvents to determine visual markers
     Object.keys(googleEvents).forEach(date => {
       const dayEvents = googleEvents[date]?.assignments || [];
+      
+      // Check what types of events exist on this date
       const hasGoogleEvents = dayEvents.some(event => event.type === 'google');
       const hasGoogleAppsScriptEvents = dayEvents.some(event => event.type === 'GoogleEvent');
       const hasCanvasAssignments = dayEvents.some(event => event.type === 'CanvasAssignment');
       const hasManualAssignments = dayEvents.some(event => event.type === 'assignment');
       
+      // Count events by type for logging and processing
       const assignmentCount = dayEvents.filter(event => event.type === 'assignment').length;
       const googleEventCount = dayEvents.filter(event => event.type === 'google').length;
       const googleAppsScriptEventCount = dayEvents.filter(event => event.type === 'GoogleEvent').length;
@@ -1027,16 +1234,41 @@ export default function App() {
     console.log(`Assignment completion toggled: ${assignment?.title} - ${isCompleting ? 'completed' : 'uncompleted'}`);
   };
 
+  // ============================================================================
+  // LIST VIEW FUNCTIONS - Functions that prepare data for assignment list display
+  // ============================================================================
+  
+  /**
+   * getAllAssignments - Extracts all assignments from googleEvents for list view
+   * 
+   * This function:
+   * 1. Iterates through all dates in googleEvents
+   * 2. Extracts events that are assignments (manual or Canvas)
+   * 3. Adds the dueDate field to each assignment
+   * 4. Returns a flat array of all assignments for sorting/display
+   * 
+   * Assignment Types Included:
+   * - 'assignment': Manual assignments created by user
+   * - 'CanvasAssignment': Canvas assignments from ICS feed
+   * 
+   * @returns {Array} Flat array of all assignments with dueDate field
+   */
   const getAllAssignments = () => {
     const allAssignments = [];
+    
+    // Iterate through all dates in googleEvents
     Object.keys(googleEvents).forEach(date => {
       const dayEvents = googleEvents[date]?.assignments || [];
+      
+      // Extract assignments from this date
       dayEvents.forEach(event => {
         if (event.type === 'assignment' || event.type === 'CanvasAssignment') {
+          // Add dueDate field and include in results
           allAssignments.push({ ...event, dueDate: date });
         }
       });
     });
+    
     return allAssignments;
   };
 
