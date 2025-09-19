@@ -2,29 +2,41 @@
 // IMPORTS AND DEPENDENCIES
 // ============================================================================
 
-// React core - useState for component state management, useEffect for lifecycle
+// React core imports - React provides the component framework, useState manages component state variables
+// that trigger re-renders when changed, useEffect handles side effects like API calls and lifecycle events
 import React, { useState, useEffect } from 'react';
 
-// React Native UI components for building the interface
+// React Native UI components - View creates layout containers, Text renders text content, StyleSheet
+// defines CSS-like styles, ScrollView enables scrolling content, Alert shows native popup dialogs,
+// TextInput creates editable text fields, TouchableOpacity makes elements tappable with press feedback,
+// Modal creates overlay dialogs, Picker provides dropdown selection, Platform detects iOS/Android
 import { View, Text, StyleSheet, ScrollView, Alert, TextInput, TouchableOpacity, Modal, Picker, Platform } from 'react-native';
 
-// Calendar component for displaying the monthly calendar view
+// Calendar component - Provides Calendar component that renders a monthly calendar grid with date selection,
+// event marking capabilities, and customizable styling for displaying assignment due dates
 import { Calendar } from 'react-native-calendars';
 
-// Date/time picker for selecting assignment due dates and times
+// DateTimePicker - Native date/time picker component that opens platform-specific date/time selection
+// dialogs for choosing assignment due dates and times, handles iOS/Android differences automatically
 import DateTimePicker from '@react-native-community/datetimepicker';
 
-// Expo authentication session for Google OAuth integration
+// Expo AuthSession - Provides OAuth 2.0 authentication flow for Google Calendar integration,
+// handles token exchange, redirect URIs, and secure credential storage
 import * as AuthSession from 'expo-auth-session';
+// makeRedirectUri - Generates the correct redirect URI for OAuth flow based on platform (web/mobile)
 import { makeRedirectUri } from 'expo-auth-session';
 
-// Expo notifications for assignment reminders
+// Expo Notifications - Provides push notification capabilities for assignment reminders,
+// handles scheduling, permissions, and notification display across platforms
 import * as Notifications from 'expo-notifications';
 
-// ICS calendar parser for Canvas assignments
+// ICAL.js - JavaScript library for parsing ICS (iCalendar) files from Canvas LMS,
+// converts Canvas assignment feeds into JavaScript objects with event data
 import ICAL from 'ical.js';
 
-// Google configuration utilities for OAuth setup
+// Google configuration utilities - GOOGLE_CONFIG contains OAuth client IDs for different platforms,
+// debugGoogleConfig logs configuration details for troubleshooting, validateGoogleConfig checks
+// if all required OAuth credentials are properly set up before attempting authentication
 import { 
   GOOGLE_CONFIG,
   debugGoogleConfig,
@@ -35,32 +47,42 @@ import {
 // CONSTANTS AND CONFIGURATION
 // ============================================================================
 
+// Logs successful app initialization to console for debugging purposes
 console.log('📱 App.js loaded successfully');
 
-// Google Apps Script URL - This is a custom script that fetches Google Calendar events
-// The script acts as a proxy to avoid CORS issues when calling Google Calendar API
+// Google Apps Script URL - Custom Google Apps Script that acts as a proxy to fetch Google Calendar events
+// This script runs on Google's servers and calls the Google Calendar API on behalf of the app,
+// avoiding CORS (Cross-Origin Resource Sharing) restrictions that prevent direct API calls from browsers
+// The script returns JSON data with calendar events that can be consumed by the React Native app
 const GOOGLE_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby12GiVuGImRqu16g4sOr5h6l-ptx3SqPGhve7H-jhNe8wzIrn8tib3cedPLN3t4F5O/exec";
 
-// Canvas ICS feed URL - This is the direct ICS calendar feed from Canvas LMS
-// ICS (iCalendar) is a standard format for calendar data exchange
-// This URL provides all Canvas assignments and events in ICS format
+// Canvas ICS feed URL - Direct ICS (iCalendar) calendar feed from Canvas Learning Management System
+// ICS is a standard RFC 5545 format for calendar data exchange used by most calendar applications
+// This URL provides all Canvas assignments, due dates, and course events in a machine-readable format
+// The feed is user-specific and requires authentication to access assignment data
 const CANVAS_ICS_URL = "https://pomfret.instructure.com/feeds/calendars/user_U5a3dGrIE7Y45lSX7KUDM87bRYen3k9NWxyuvQOn.ics";
 
 // ============================================================================
 // WEBBROWSER CONFIGURATION FOR OAUTH
 // ============================================================================
 
-// Configure WebBrowser for OAuth (only for web platforms)
-// This is needed to handle the OAuth redirect flow properly on web
-// On native platforms (iOS/Android), this is not needed
+// Configure WebBrowser for OAuth authentication flow (only required for web platforms)
+// WebBrowser handles the OAuth redirect flow by opening Google's authentication page
+// and capturing the authorization code when the user completes the login process
+// This configuration is not needed on native platforms (iOS/Android) where OAuth
+// is handled differently through the system browser or in-app web views
 if (typeof window !== 'undefined') {
   try {
+    // Dynamically import WebBrowser module only when running on web platform
+    // This prevents errors on native platforms where WebBrowser is not available
     const WebBrowser = require('expo-web-browser');
-    // Complete any pending OAuth sessions from previous attempts
+    // Complete any pending OAuth sessions from previous authentication attempts
+    // This cleans up any incomplete OAuth flows that might be lingering in browser state
     WebBrowser.maybeCompleteAuthSession();
     console.log('✅ WebBrowser configured for OAuth');
   } catch (error) {
-    // This is expected on native platforms where WebBrowser isn't available
+    // This error is expected on native platforms where WebBrowser module is not available
+    // The error is caught and logged as a warning rather than crashing the app
     console.warn('⚠️ WebBrowser not available (expected on native):', error.message);
   }
 }
@@ -98,130 +120,233 @@ export default function App() {
   // STATE MANAGEMENT - All the data the app needs to track
   // ============================================================================
   
-  // Manual assignments that users manually add through the UI
-  // Structure: { "2024-01-15": { assignments: [{ title, description, dueDate, ... }] } }
+  // Manual assignments state - Stores user-created assignments added through the add assignment form
+  // Structure: { "2024-01-15": { assignments: [{ title, description, dueDate, course, priority, ... }] } }
+  // Key is date string in YYYY-MM-DD format, value contains array of assignment objects
+  // This state persists across app sessions and is used to display user-created assignments
   const [manualAssignments, setManualAssignments] = useState({});
   
-  // Google Calendar events (includes Google Calendar + Canvas assignments)
-  // This is the main events state that combines all event sources
-  // Structure: { "2024-01-15": { assignments: [{ type, title, description, ... }] } }
+  // Google Calendar events state - Main events container that combines all event sources
+  // Structure: { "2024-01-15": { assignments: [{ type, title, description, dotColor, ... }] } }
+  // Contains events from: Google Calendar API, Google Apps Script, Canvas ICS, and manual assignments
+  // This is the primary state used by the calendar component for rendering event dots
   const [googleEvents, setGoogleEvents] = useState({});
   
-  // Currently selected date on the calendar (YYYY-MM-DD format)
+  // Selected date state - Tracks which date is currently selected on the calendar
+  // Value is date string in YYYY-MM-DD format, initialized to today's date
+  // Used to highlight the selected date and show events for that specific date
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   
-  // Modal visibility states
-  const [showAddModal, setShowAddModal] = useState(false); // Add assignment modal
-  const [showDatePicker, setShowDatePicker] = useState(false); // Date picker modal
+  // Modal visibility states - Control which UI overlays are currently displayed
+  const [showAddModal, setShowAddModal] = useState(false); // Controls add assignment form modal visibility
+  const [showDatePicker, setShowDatePicker] = useState(false); // Controls date picker modal visibility
   
-  // View mode: 'calendar' shows monthly calendar, 'list' shows assignment list
+  // View mode state - Determines which main view is currently displayed
+  // 'calendar' shows the monthly calendar grid with event dots
+  // 'list' shows a scrollable list of all assignments sorted by selected criteria
   const [currentView, setCurrentView] = useState('calendar');
   
-  // Sorting options for the list view: 'date', 'class', 'type', 'priority', 'category'
+  // Sorting state - Controls how assignments are ordered in list view
+  // Options: 'date' (by due date), 'class' (by course), 'type' (by assignment type),
+  // 'priority' (by priority level), 'category' (by category)
   const [sortBy, setSortBy] = useState('date');
   
-  // Form data for new assignments being created
+  // Form data state for new assignments - Stores user input while creating a new assignment
+  // This object contains all the form fields that users fill out in the add assignment modal
+  // Each field has a default value and gets updated as the user types in the form
   const [newAssignment, setNewAssignment] = useState({
-    title: '',           // Assignment title
-    description: '',    // Assignment description
-    dueDate: '',        // Due date (YYYY-MM-DD)
-    time: '23:59',      // Due time (HH:MM)
-    course: '',         // Course name
-    assignmentType: '', // Type of assignment (Homework, Quiz, etc.)
-    priority: 'Medium'  // Priority level (High, Medium, Low)
+    title: '',           // Assignment title - required field, user-entered text
+    description: '',    // Assignment description - optional detailed text about the assignment
+    dueDate: '',        // Due date in YYYY-MM-DD format - selected via date picker
+    time: '23:59',      // Due time in HH:MM format - defaults to end of day
+    course: '',         // Course name - selected from dropdown menu
+    assignmentType: '', // Type of assignment - selected from dropdown (Homework, Quiz, etc.)
+    priority: 'Medium'  // Priority level - selected from dropdown (High, Medium, Low)
   });
   
-  // Google Calendar authentication state
-  const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(false); // OAuth sign-in status
-  const [isGoogleLoading, setIsGoogleLoading] = useState(false);   // Loading state for OAuth
-  const [accessToken, setAccessToken] = useState(null);            // OAuth access token
+  // Google Calendar authentication state - Tracks OAuth authentication status and tokens
+  const [isGoogleSignedIn, setIsGoogleSignedIn] = useState(false); // Boolean indicating if user is authenticated with Google
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);   // Boolean indicating if OAuth flow is in progress
+  const [accessToken, setAccessToken] = useState(null);            // String containing OAuth access token for API calls
 
   // ============================================================================
   // DROPDOWN OPTIONS - Predefined choices for assignment forms
   // ============================================================================
   
-  // Course options for the assignment form dropdown
-  // Each option has a display label and a value used in the data
+  // Course options array - Predefined list of courses for the assignment form dropdown
+  // Each object contains a 'label' (displayed to user) and 'value' (stored in data)
+  // Used by the Picker component to populate course selection dropdown
   const courseOptions = [
-    { label: 'Select Course', value: '' },
-    { label: 'Math', value: 'math' },
-    { label: 'English', value: 'english' },
-    { label: 'History', value: 'history' },
-    { label: 'Science', value: 'science' },
-    { label: 'Art', value: 'art' },
-    { label: 'Music', value: 'music' },
-    { label: 'Physical Education', value: 'pe' },
-    { label: 'Other', value: 'other' }
+    { label: 'Select Course', value: '' },        // Default placeholder option
+    { label: 'Math', value: 'math' },             // Mathematics course
+    { label: 'English', value: 'english' },       // English/Language Arts course
+    { label: 'History', value: 'history' },       // History/Social Studies course
+    { label: 'Science', value: 'science' },        // Science course
+    { label: 'Art', value: 'art' },               // Art course
+    { label: 'Music', value: 'music' },           // Music course
+    { label: 'Physical Education', value: 'pe' },  // Physical Education course
+    { label: 'Other', value: 'other' }            // Catch-all for other courses
   ];
 
-  // Assignment type options for categorizing assignments
+  // Assignment type options array - Categories for different types of academic work
+  // Used by the Picker component to categorize assignments by their nature
   const assignmentTypeOptions = [
-    { label: 'Select Type', value: '' },
-    { label: 'Homework', value: 'Homework' },
-    { label: 'Project', value: 'Project' },
-    { label: 'Test', value: 'Test' }
+    { label: 'Select Type', value: '' },    // Default placeholder option
+    { label: 'Homework', value: 'Homework' }, // Regular homework assignments
+    { label: 'Project', value: 'Project' },   // Long-term projects
+    { label: 'Test', value: 'Test' }          // Exams and quizzes
   ];
 
-  // Priority level options for assignment urgency
+  // Priority level options array - Urgency levels for assignment prioritization
+  // Used by the Picker component to set assignment priority for scheduling
   const priorityOptions = [
-    { label: 'High', value: 'High' },
-    { label: 'Medium', value: 'Medium' },
-    { label: 'Low', value: 'Low' }
+    { label: 'High', value: 'High' },     // Urgent assignments requiring immediate attention
+    { label: 'Medium', value: 'Medium' }, // Standard priority assignments
+    { label: 'Low', value: 'Low' }        // Low priority assignments that can be done later
   ];
 
   // ============================================================================
   // UI CONFIGURATION - Colors and visual settings
   // ============================================================================
   
-  // Priority color mapping - determines the color of assignment dots based on priority
-  // High priority = Red, Medium = Orange, Low = Green
+  // Priority color mapping object - Maps priority levels to hex color codes for visual representation
+  // Used by the calendar component to display colored dots indicating assignment urgency
+  // Colors follow standard UI conventions: red for urgent, orange for normal, green for low priority
   const priorityColors = {
-    High: '#e53935',    // Red - urgent assignments
-    Medium: '#fb8c00',  // Orange - normal priority
-    Low: '#43a047'      // Green - low priority
+    High: '#e53935',    // Red hex color - indicates urgent assignments requiring immediate attention
+    Medium: '#fb8c00',  // Orange hex color - indicates normal priority assignments
+    Low: '#43a047'      // Green hex color - indicates low priority assignments that can be deferred
   };
 
   // ============================================================================
   // OAUTH CONFIGURATION - Google Calendar authentication setup
   // ============================================================================
   
-  // Configure redirect URI for OAuth - where Google redirects after authentication
+  // Generate redirect URI for OAuth flow - This is where Google redirects the user after authentication
+  // makeRedirectUri() automatically determines the correct URI based on platform (web/mobile)
+  // For web: typically http://localhost:8082, for mobile: custom scheme like exp://localhost:8081
   const redirectUri = makeRedirectUri({});
+  // Log the generated redirect URI for debugging OAuth configuration issues
   console.log('🔗 OAuth Redirect URI:', redirectUri);
+  // Log the current origin to help debug platform-specific OAuth issues
   console.log('🌐 Current Origin:', typeof window !== 'undefined' ? window.location.origin : 'Native');
+
+  // ============================================================================
+  // PERSISTENCE FUNCTIONS - localStorage utilities for data persistence
+  // ============================================================================
+  
+  // loadFromLocalStorage function - COMMENTED OUT to prevent stale data from overwriting fresh API data
+  // This function would load saved manual assignments and Google events from browser localStorage
+  // on app startup, but is disabled to ensure clean state until Google Calendar connection
+  // const loadFromLocalStorage = () => {
+  //   try {
+  //     // Load manual assignments from localStorage using the key 'studyCalendar_manualAssignments'
+  //     // localStorage.getItem() returns a string or null, so we check if data exists before parsing
+  //     const savedManualAssignments = localStorage.getItem('studyCalendar_manualAssignments');
+  //     if (savedManualAssignments) {
+  //       // Parse the JSON string back into a JavaScript object
+  //       // JSON.parse() converts the stored string back to the original object structure
+  //       const parsedManualAssignments = JSON.parse(savedManualAssignments);
+  //       // Log the number of dates loaded for debugging purposes
+  //       console.log('📁 Loaded manual assignments from localStorage:', Object.keys(parsedManualAssignments).length, 'dates');
+  //       // Update the manualAssignments state with the loaded data
+  //       setManualAssignments(parsedManualAssignments);
+  //     }
+  //     
+  //     // Load Google events from localStorage using the key 'studyCalendar_googleEvents'
+  //     // This would restore previously fetched Google Calendar and Canvas events
+  //     const savedGoogleEvents = localStorage.getItem('studyCalendar_googleEvents');
+  //     if (savedGoogleEvents) {
+  //       // Parse the JSON string back into a JavaScript object
+  //       const parsedGoogleEvents = JSON.parse(savedGoogleEvents);
+  //       // Log the number of dates loaded for debugging purposes
+  //       console.log('📁 Loaded Google events from localStorage:', Object.keys(parsedGoogleEvents).length, 'dates');
+  //       // Update the googleEvents state with the loaded data
+  //       setGoogleEvents(parsedGoogleEvents);
+  //     }
+  //   } catch (error) {
+  //     // Catch any JSON parsing errors or localStorage access issues
+  //     console.error('❌ Error loading data from localStorage:', error);
+  //   }
+  // };
+  
+  // saveManualAssignmentsToStorage function - Saves manual assignments to browser localStorage
+  // This function is called whenever manualAssignments state changes to persist user-created assignments
+  const saveManualAssignmentsToStorage = (assignments) => {
+    try {
+      // Convert the assignments object to a JSON string and store it in localStorage
+      // localStorage.setItem() stores data as strings, so we use JSON.stringify() to convert
+      localStorage.setItem('studyCalendar_manualAssignments', JSON.stringify(assignments));
+      console.log('💾 Saved manual assignments to localStorage:', Object.keys(assignments).length, 'dates');
+    } catch (error) {
+      console.error('❌ Error saving manual assignments to localStorage:', error);
+    }
+  };
+  
+  // Save Google events to localStorage
+  const saveGoogleEventsToStorage = (events) => {
+    try {
+      localStorage.setItem('studyCalendar_googleEvents', JSON.stringify(events));
+      console.log('💾 Saved Google events to localStorage:', Object.keys(events).length, 'dates');
+    } catch (error) {
+      console.error('❌ Error saving Google events to localStorage:', error);
+    }
+  };
 
   // ============================================================================
   // UTILITY FUNCTIONS - Helper functions for date/time calculations
   // ============================================================================
   
-  // Calculate notification trigger date for assignment reminders
-  // Takes due date, days before due date, and hour to send reminder
+  // toLocalTriggerDate function - Calculates when to send assignment reminder notifications
+  // Takes a due date string (YYYY-MM-DD format), number of days before due date to remind,
+  // and hour of day (24-hour format) to send the reminder
   const toLocalTriggerDate = (dueDateYYYYMMDD, daysBefore, hour = 17) => {
+    // Convert the due date string to a JavaScript Date object
+    // new Date() parses the YYYY-MM-DD string into a proper Date instance
     const dueDate = new Date(dueDateYYYYMMDD);
+    // Create a copy of the due date to avoid mutating the original
     const triggerDate = new Date(dueDate);
+    // Subtract the specified number of days from the due date
+    // setDate() modifies the date by the given number of days
     triggerDate.setDate(triggerDate.getDate() - daysBefore);
+    // Set the time to the specified hour (default 5 PM) with minutes, seconds, and milliseconds to 0
+    // setHours() sets the hour and resets minutes/seconds/milliseconds to 0
     triggerDate.setHours(hour, 0, 0, 0);
     
     // Ensure reminder is in the future (not in the past)
+    // Get current date/time to compare against the calculated trigger date
     const now = new Date();
+    // If the calculated trigger date is in the past, set it to 1 minute from now
     if (triggerDate <= now) {
+      // setTime() sets the date to a specific timestamp (current time + 60,000 milliseconds)
       triggerDate.setTime(now.getTime() + 60000); // 1 minute from now
     }
     
+    // Return the calculated trigger date for use in notification scheduling
     return triggerDate;
   };
 
-  // Request notification permissions
+  // requestNotificationPermissions function - Requests permission to send push notifications
+  // This function must be called before scheduling any notifications on mobile devices
+  // Returns a boolean indicating whether permission was granted
   const requestNotificationPermissions = async () => {
     try {
+      // Request notification permissions from the system
+      // Notifications.requestPermissionsAsync() returns a promise that resolves to permission status
       const { status } = await Notifications.requestPermissionsAsync();
+      // Check if permission was granted (status must be 'granted' to send notifications)
       if (status !== 'granted') {
+        // Log warning if permission was denied or not granted
         console.warn('Notification permissions not granted');
+        // Return false to indicate notifications cannot be sent
         return false;
       }
+      // Return true if permission was granted
       return true;
     } catch (error) {
+      // Catch any errors during permission request (e.g., on platforms that don't support notifications)
       console.warn('Failed to request notification permissions:', error);
+      // Return false to indicate notifications cannot be sent
       return false;
     }
   };
@@ -287,24 +412,31 @@ export default function App() {
     }
   };
 
-  // Categorize events by title keywords
+  // categorizeEvent function - Analyzes event titles to determine category and visual styling
+  // Takes an event title string and returns an object with category name and dot color
+  // This function uses keyword matching to automatically categorize events from Google Calendar
   const categorizeEvent = (title) => {
+    // Convert title to lowercase for case-insensitive keyword matching
+    // toLowerCase() ensures that "Math" and "math" are treated the same way
     const titleLower = title.toLowerCase();
     
-    // Classes
+    // Classes category - Matches academic class names and subjects
+    // Uses includes() to check if any of these keywords appear anywhere in the title
     if (titleLower.includes('hon') || titleLower.includes('humanities') || 
         titleLower.includes('math') || titleLower.includes('calculus') || 
         titleLower.includes('physics') || titleLower.includes('spanish')) {
+      // Return category object with name and blue dot color (#1e88e5)
       return { category: 'Classes', dotColor: '#1e88e5' };
     }
     
-    // Sports/Activities
+    // Sports/Activities category - Matches athletic and extracurricular activities
     if (titleLower.includes('cross country') || titleLower.includes('ath') || 
         titleLower.includes('practice')) {
+      // Return category object with name and green dot color (#43a047)
       return { category: 'Sports/Activities', dotColor: '#43a047' };
     }
     
-    // Meetings/Chapel/Advisory
+    // Meetings/Chapel/Advisory category - Matches institutional and administrative events
     if (titleLower.includes('meeting') || titleLower.includes('chapel') || 
         titleLower.includes('advisor')) {
       return { category: 'Meetings/Chapel/Advisory', dotColor: '#fdd835' };
@@ -333,6 +465,7 @@ export default function App() {
       }
       
       const data = await response.json();
+      console.log("📊 Raw Apps Script events:", JSON.stringify(data, null, 2));
       
       if (!data || !Array.isArray(data)) {
         console.log('No events found');
@@ -342,6 +475,7 @@ export default function App() {
       // Map events to our format with categorization
       const googleEvents = data.map(ev => {
         const categorization = categorizeEvent(ev.title);
+        const eventId = ev.id || `GoogleEvent-${new Date(ev.start).toISOString().split("T")[0]}-${Math.random().toString(36).substr(2, 9)}`;
         return {
           title: ev.title,
           date: new Date(ev.start).toISOString().split("T")[0],
@@ -352,7 +486,7 @@ export default function App() {
           time: new Date(ev.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           endTime: ev.end ? new Date(ev.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
           location: ev.location || '',
-          id: ev.id || Date.now() + Math.random() // Generate unique ID if not provided
+          id: eventId // Use stable ID for deduplication
         };
       });
       
@@ -376,12 +510,42 @@ export default function App() {
             mergedEvents[dateKey] = { assignments: [] };
           }
           
-          // Add Google event to the assignments array
+          // Filter out events with the same id to prevent duplicates
+          const existingEvents = mergedEvents[dateKey].assignments || [];
+          const filteredEvents = existingEvents.filter(existingEvent => existingEvent.id !== event.id);
+          
+          // Add new Google event to the filtered assignments array
           mergedEvents[dateKey].assignments = [
-            ...(mergedEvents[dateKey].assignments || []),
+            ...filteredEvents,
             event
           ];
+          
+          console.log(`📊 Date ${dateKey}: Filtered out ${existingEvents.length - filteredEvents.length} old GoogleEvent(s), added ${1} new GoogleEvent(s)`);
         });
+        
+        console.log('📊 Google Apps Script events merged into googleEvents state');
+        console.log('📊 googleEvents state after Google Apps Script merge:', JSON.stringify(mergedEvents, null, 2));
+        
+        // Log summary to confirm no duplicates and show event breakdown
+        const totalGoogleAppsScriptEvents = Object.values(mergedEvents).reduce((total, dayEvents) => {
+          return total + (dayEvents.assignments?.filter(event => event.type === 'GoogleEvent').length || 0);
+        }, 0);
+        const totalGoogleAPIEvents = Object.values(mergedEvents).reduce((total, dayEvents) => {
+          return total + (dayEvents.assignments?.filter(event => event.type === 'google').length || 0);
+        }, 0);
+        const totalCanvasEvents = Object.values(mergedEvents).reduce((total, dayEvents) => {
+          return total + (dayEvents.assignments?.filter(event => event.type === 'CanvasAssignment').length || 0);
+        }, 0);
+        const totalClassEvents = Object.values(mergedEvents).reduce((total, dayEvents) => {
+          return total + (dayEvents.assignments?.filter(event => event.type === 'assignment').length || 0);
+        }, 0);
+        
+        console.log(`📊 Event source breakdown after Google Apps Script merge:`);
+        console.log(`  🔵 Google Apps Script (GoogleEvent): ${totalGoogleAppsScriptEvents} (should equal ${googleEvents.length})`);
+        console.log(`  📅 Google Calendar API (google): ${totalGoogleAPIEvents}`);
+        console.log(`  📘 Canvas events (CanvasAssignment): ${totalCanvasEvents}`);
+        console.log(`  🎓 Class events (assignment): ${totalClassEvents}`);
+        console.log(`📊 Total events: ${totalGoogleAppsScriptEvents + totalGoogleAPIEvents + totalCanvasEvents + totalClassEvents}`);
         
         return mergedEvents;
       });
@@ -449,10 +613,14 @@ export default function App() {
       console.log('✅ Google configuration is valid');
     }
     
+    console.log('=== Loading persisted data ===');
+    // Load persisted data from localStorage
+    // loadFromLocalStorage();
+    
     console.log('=== App initialization complete ===');
     
     // Fetch Google Apps Script events on initial load
-    fetchGoogleEvents();
+    // fetchGoogleEvents();
     
     // Print Google Cloud Console OAuth setup instructions
     console.log('📋 GOOGLE CLOUD CONSOLE OAUTH SETUP INSTRUCTIONS:');
@@ -509,10 +677,11 @@ export default function App() {
       
       console.log('✅ Access token received, length:', authentication.accessToken.length);
       setAccessToken(authentication.accessToken);
+      console.log("🔑 Google Access Token:", authentication.accessToken);
       setIsGoogleSignedIn(true);
       // Fetch events after successful authentication
+      fetchGoogleEvents();
       fetchGoogleCalendarEventsData(authentication.accessToken);
-      // Also fetch Canvas events
       fetchCanvasEvents();
     } else if (response?.type === 'error') {
       console.error('❌ OAuth error response:', response.error);
@@ -521,6 +690,32 @@ export default function App() {
       console.log('OAuth cancelled by user');
     }
   }, [response]);
+
+  /**
+   * useEffect - Persist manualAssignments to localStorage
+   * 
+   * This hook runs whenever manualAssignments state changes and saves
+   * the data to localStorage for persistence across browser refreshes.
+   */
+  // useEffect(() => {
+  //   // Only save if manualAssignments is not empty (avoid saving initial empty state)
+  //   if (Object.keys(manualAssignments).length > 0) {
+  //     saveManualAssignmentsToStorage(manualAssignments);
+  //   }
+  // }, [manualAssignments]);
+
+  /**
+   * useEffect - Persist googleEvents to localStorage
+   * 
+   * This hook runs whenever googleEvents state changes and saves
+   * the data to localStorage for persistence across browser refreshes.
+   */
+  // useEffect(() => {
+  //   // Only save if googleEvents is not empty (avoid saving initial empty state)
+  //   if (Object.keys(googleEvents).length > 0) {
+  //     saveGoogleEventsToStorage(googleEvents);
+  //   }
+  // }, [googleEvents]);
 
   // Google Calendar Functions
   const handleGoogleSignIn = async () => {
@@ -544,6 +739,7 @@ export default function App() {
       if (isGoogleSignedIn && accessToken) {
         // If already signed in, just refresh events
         console.log('✅ Already signed in, refreshing events...');
+        console.log("🔑 Current Access Token:", accessToken);
         await fetchGoogleCalendarEventsData(accessToken);
         Alert.alert('Success', 'Google Calendar events refreshed!');
       } else {
@@ -695,13 +891,19 @@ export default function App() {
       const data = await response.json();
       const googleEventsList = data.items || [];
       
+      console.log("🔍 Full Google Calendar API response:", JSON.stringify(data, null, 2));
+      console.log('✅ Google Calendar API Response Status:', response.status);
       console.log('✅ Google Calendar events received:', googleEventsList.length, 'events');
       
-      // Log all events before filtering to see their fields
-      console.log('📋 All Google Calendar events (before filtering):');
+      // Log all events with their date keys for debugging
+      console.log('📋 All Google Calendar events with date keys:');
       googleEventsList.forEach((event, index) => {
+        const startTime = event.start?.dateTime || event.start?.date;
+        const eventDate = startTime ? new Date(startTime).toISOString().split('T')[0] : 'NO_DATE';
+        
         console.log(`Event ${index + 1}:`, {
-          summary: event.summary,
+          title: event.summary || 'NO_TITLE',
+          dateKey: eventDate,
           description: event.description,
           colorId: event.colorId,
           start: event.start,
@@ -711,23 +913,25 @@ export default function App() {
         });
       });
       
+      // Log raw event details for debugging
+      googleEventsList.forEach((event, index) => {
+        console.log("📅 Raw Google event:", {
+          id: event.id,
+          title: event.summary,
+          start: event.start,
+          end: event.end,
+          colorId: event.colorId,
+          description: event.description,
+          location: event.location
+        });
+      });
+      
       if (googleEventsList.length === 0) {
-        console.log('📝 No events found in Google Calendar');
+        console.warn("⚠️ Google returned zero events.");
       }
       
-      // Create unified events structure that preserves existing events and adds Google Calendar events
+      // Create unified events structure starting with existing googleEvents
       const unifiedEvents = { ...googleEvents };
-      
-      // Add manual assignments to the unified structure
-      Object.keys(manualAssignments).forEach(date => {
-        if (!unifiedEvents[date]) {
-          unifiedEvents[date] = { assignments: [] };
-        }
-        unifiedEvents[date].assignments = [
-          ...(unifiedEvents[date].assignments || []),
-          ...(manualAssignments[date].assignments || [])
-        ];
-      });
       
       // Debug counters
       let canvasAssignmentCount = 0;
@@ -736,6 +940,17 @@ export default function App() {
       let regularGoogleEventCount = 0;
       
       googleEventsList.forEach(event => {
+        // Log each event being processed
+        console.log("📅 Processing Google event:", {
+          id: event.id,
+          summary: event.summary,
+          start: event.start,
+          end: event.end,
+          colorId: event.colorId,
+          description: event.description,
+          location: event.location
+        });
+        
         // Parse start time - handle both date and dateTime
         const startTime = event.start?.dateTime || event.start?.date;
         if (!startTime) return;
@@ -750,7 +965,7 @@ export default function App() {
         const eventTitle = event.summary || 'Google Event';
         const eventDescription = event.description || '';
         
-        // Primary detection: Check for colorId = '11' (red blocks)
+        // Primary detection: Check for colorId = '11' (red blocks) - Canvas assignments
         const isRedEvent = event.colorId === '11';
         
         // Secondary detection: Keyword-based Canvas assignment detection (fallback)
@@ -765,6 +980,20 @@ export default function App() {
         // Determine if this is a Canvas assignment
         const isCanvas = isRedEvent || isCanvasByKeyword(eventTitle, eventDescription);
         
+        // Determine if this is a class event (regular Google Calendar events that aren't Canvas assignments)
+        // Class events are typically recurring events with consistent titles and times
+        const isClassEvent = !isCanvas && eventTitle && eventTitle.trim() !== '';
+        
+        // Log class event detection
+        if (isClassEvent) {
+          console.log(`🎓 Class Event Detected: "${eventTitle}"`, {
+            id: event.id,
+            colorId: event.colorId,
+            startTime: startTime,
+            isRecurring: event.id && event.id.includes('_')
+          });
+        }
+
         // Log Canvas assignment detection details
         if (isCanvas) {
           console.log(`🎯 Canvas Assignment Detected: "${eventTitle}"`, {
@@ -774,7 +1003,7 @@ export default function App() {
             detectionMethod: isRedEvent ? 'colorId=11' : 'keyword match'
           });
         }
-        
+
         // Count for debug logging
         if (isRedEvent) {
           redEventCount++;
@@ -785,43 +1014,134 @@ export default function App() {
         } else {
           regularGoogleEventCount++;
         }
+
+        // Count for debug logging
+        if (isRedEvent) {
+          redEventCount++;
+          canvasAssignmentCount++;
+        } else if (isCanvasByKeyword(eventTitle, eventDescription)) {
+          keywordCanvasCount++;
+          canvasAssignmentCount++;
+        } else if (isClassEvent) {
+          regularGoogleEventCount++;
+        }
+
+        // Determine event type and styling
+        let eventType, category, dotColor;
+        if (isCanvas) {
+          eventType = 'CanvasAssignment';
+          category = 'Canvas Assignment';
+          dotColor = '#ff9800'; // Orange for Canvas assignments
+        } else if (isClassEvent) {
+          eventType = 'assignment'; // Use assignment type for classes to get proper styling
+          category = 'Class';
+          dotColor = '#ff6b6b'; // Use assignment color for classes
+        } else {
+          eventType = 'google';
+          category = 'Google Event';
+          dotColor = '#2196f3'; // Blue for other Google events
+        }
+        // Improved merging logic: Handle recurring events and prevent duplicates
+        const existingEvents = unifiedEvents[dateKey]?.assignments || [];
         
-        // Add Google event to unified events structure
+        // Debug: log existing events before filtering
+        console.log("🗂 Existing events for", dateKey, existingEvents);
+        
+        // Simple filtering: only deduplicate by exact event.id match
+        // This prevents true duplicates while preserving events from different sources
+        const filteredEvents = existingEvents.filter(existingEvent => existingEvent.id !== event.id);
+        
+        // Debug: log filtered events after filtering
+        console.log("🗑 Filtered events for", dateKey, filteredEvents);
+        
         unifiedEvents[dateKey] = {
           ...unifiedEvents[dateKey],
           assignments: [
-            ...(unifiedEvents[dateKey]?.assignments || []),
+            ...filteredEvents,
             {
               title: eventTitle,
               description: eventDescription,
               time: eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               endTime: endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              type: isCanvas ? 'CanvasAssignment' : 'google',
-              category: isCanvas ? 'Canvas Assignment' : 'Google Event',
-              dotColor: isCanvas ? '#ff9800' : '#2196f3',
+              type: eventType, // 'assignment', 'CanvasAssignment', or 'google'
+              category: category, // 'Class', 'Canvas Assignment', or 'Google Event'
+              dotColor: dotColor, // Color based on event type
               location: event.location || '',
               htmlLink: event.htmlLink || '',
               id: event.id,
-              colorId: event.colorId // Store original colorId for debugging
+              colorId: event.colorId
             }
           ]
         };
+        console.log(`📊 Date ${dateKey}: Filtered out ${existingEvents.length - filteredEvents.length} old ${eventType}(s), added 1 new ${eventType}`);
       });
       
-      // Debug logging for Canvas assignments
+      // Debug logging for event counts
       console.log(`📊 Google Calendar breakdown: ${canvasAssignmentCount} total Canvas assignments`);
       console.log(`🔴 Red events (colorId='11'): ${redEventCount}`);
       console.log(`📝 Keyword-detected Canvas: ${keywordCanvasCount}`);
-      console.log(`📅 Other Google events: ${regularGoogleEventCount}`);
+      console.log(`🎓 Class events: ${regularGoogleEventCount}`);
+      
+      // Warning if no class-type events detected
+      if (regularGoogleEventCount === 0) {
+        console.warn("⚠️ No class events detected in Google Calendar response.");
+      }
+      
+      // Additional check for class events in the final structure
+      const classEventCount = Object.values(unifiedEvents).reduce((total, dayEvents) => 
+        total + (dayEvents.assignments?.filter(e => e.type === 'assignment').length || 0), 0);
+      console.log(`🎓 Class events in final structure: ${classEventCount}`);
 
       console.log('📊 Parsed Google events into unified structure:', Object.keys(unifiedEvents).length, 'dates');
       console.log('📋 Total events across all dates:', Object.values(unifiedEvents).reduce((total, dayEvents) => total + (dayEvents.assignments?.length || 0), 0));
       
+      // Log final unifiedEvents structure
+      console.log("✅ Final unifiedEvents:", JSON.stringify(unifiedEvents, null, 2));
+      
+      // Debug: Log event counts by source and type
+      const totalEvents = Object.values(unifiedEvents).reduce((total, dayEvents) => total + (dayEvents.assignments?.length || 0), 0);
+      const classEvents = Object.values(unifiedEvents).reduce((total, dayEvents) => total + (dayEvents.assignments?.filter(e => e.type === 'assignment').length || 0), 0);
+      const googleEvents = Object.values(unifiedEvents).reduce((total, dayEvents) => total + (dayEvents.assignments?.filter(e => e.type === 'google').length || 0), 0);
+      const canvasEvents = Object.values(unifiedEvents).reduce((total, dayEvents) => total + (dayEvents.assignments?.filter(e => e.type === 'CanvasAssignment').length || 0), 0);
+      const appsScriptEvents = Object.values(unifiedEvents).reduce((total, dayEvents) => total + (dayEvents.assignments?.filter(e => e.type === 'GoogleEvent').length || 0), 0);
+      
+      console.log("📊 Event counts by source:", {
+        total: totalEvents,
+        classes: classEvents,
+        googleAPI: googleEvents,
+        canvas: canvasEvents,
+        appsScript: appsScriptEvents
+      });
+      
       // Update the unified events state
+      console.log("🛠 DEBUG - Unified Events Preview:", JSON.stringify(unifiedEvents, null, 2));
       setGoogleEvents(unifiedEvents);
       
       // Debug logging after merge
       console.log('📊 googleEvents state after Google Calendar merge:', JSON.stringify(unifiedEvents, null, 2));
+      console.log('📊 Total dates with events after Google Calendar merge:', Object.keys(unifiedEvents).length);
+      console.log('📊 Total events across all dates after Google Calendar merge:', Object.values(unifiedEvents).reduce((total, dayEvents) => total + (dayEvents.assignments?.length || 0), 0));
+      
+      // Log summary to confirm both sources are preserved
+      const totalGoogleEvents = Object.values(unifiedEvents).reduce((total, dayEvents) => {
+        return total + (dayEvents.assignments?.filter(event => event.type === 'google').length || 0);
+      }, 0);
+      const totalGoogleAppsScriptEvents = Object.values(unifiedEvents).reduce((total, dayEvents) => {
+        return total + (dayEvents.assignments?.filter(event => event.type === 'GoogleEvent').length || 0);
+      }, 0);
+      const totalCanvasFromGoogle = Object.values(unifiedEvents).reduce((total, dayEvents) => {
+        return total + (dayEvents.assignments?.filter(event => event.type === 'CanvasAssignment').length || 0);
+      }, 0);
+      const totalClassEvents = Object.values(unifiedEvents).reduce((total, dayEvents) => {
+        return total + (dayEvents.assignments?.filter(event => event.type === 'assignment').length || 0);
+      }, 0);
+      
+      console.log(`📊 Event source breakdown after Google Calendar merge:`);
+      console.log(`  📅 Google Calendar API (google): ${totalGoogleEvents}`);
+      console.log(`  🔵 Google Apps Script (GoogleEvent): ${totalGoogleAppsScriptEvents}`);
+      console.log(`  📘 Canvas from Google (CanvasAssignment): ${totalCanvasFromGoogle}`);
+      console.log(`  🎓 Class events (assignment): ${totalClassEvents}`);
+      console.log(`📊 Total events: ${totalGoogleEvents + totalGoogleAppsScriptEvents + totalCanvasFromGoogle + totalClassEvents}`);
 
     } catch (error) {
       console.error('❌ Error fetching Google Calendar events:', error);
@@ -858,7 +1178,10 @@ export default function App() {
         },
       });
 
+      console.log('✅ Canvas ICS Response Status:', response.status);
+      
       if (!response.ok) {
+        console.error('❌ Canvas ICS fetch failed:', response.status, response.statusText);
         throw new Error(`Canvas ICS fetch failed: ${response.status} ${response.statusText}`);
       }
 
@@ -873,21 +1196,30 @@ export default function App() {
       
       console.log('📋 Parsed Canvas events:', vevents.length, 'events');
       
-      // Debug logging: show example events
-      if (vevents.length > 0) {
-        console.log('📋 Example Canvas events:');
-        vevents.slice(0, 3).forEach((vevent, index) => {
+      // Log raw Canvas event titles for debugging
+      console.log("📘 Raw Canvas events:", vevents.map(v => new ICAL.Event(v).summary));
+      
+      // Debug logging: show all events with date keys
+      console.log('📋 All Canvas events with date keys:');
+      vevents.forEach((vevent, index) => {
+        try {
           const event = new ICAL.Event(vevent);
+          const startDate = event.startDate?.toJSDate();
+          const dateKey = startDate ? startDate.toISOString().split('T')[0] : 'NO_DATE';
+          
           console.log(`Canvas Event ${index + 1}:`, {
-            summary: event.summary,
-            startDate: event.startDate?.toJSDate(),
+            title: event.summary || 'NO_TITLE',
+            dateKey: dateKey,
+            startDate: startDate,
             endDate: event.endDate?.toJSDate(),
             description: event.description,
             location: event.location,
             uid: event.uid
           });
-        });
-      }
+        } catch (eventError) {
+          console.warn(`⚠️ Error parsing Canvas event ${index + 1}:`, eventError);
+        }
+      });
       
       // Convert Canvas events to unified format
       const canvasEvents = {};
@@ -934,6 +1266,10 @@ export default function App() {
       
       console.log(`📊 Canvas events parsed: ${canvasAssignmentCount} assignments across ${Object.keys(canvasEvents).length} dates`);
       
+      if (vevents.length === 0) {
+        console.warn("⚠️ Canvas ICS returned zero events.");
+      }
+      
       // Merge Canvas events into existing googleEvents state
       setGoogleEvents(prevEvents => {
         const mergedEvents = { ...prevEvents };
@@ -942,18 +1278,31 @@ export default function App() {
           if (!mergedEvents[date]) {
             mergedEvents[date] = { assignments: [] };
           }
-          
-          // Add Canvas assignments to existing assignments for this date
+          // Filter out Canvas events with the same id to prevent duplicates
+          const existingEvents = mergedEvents[date].assignments || [];
+          const canvasEventIds = canvasEvents[date].assignments.map(e => e.id);
+          const filteredEvents = existingEvents.filter(existingEvent => 
+            existingEvent.type !== 'CanvasAssignment' || !canvasEventIds.includes(existingEvent.id)
+          );
           mergedEvents[date].assignments = [
-            ...(mergedEvents[date].assignments || []),
+            ...filteredEvents,
             ...canvasEvents[date].assignments
           ];
+          console.log(`📊 Date ${date}: Filtered out ${existingEvents.length - filteredEvents.length} old CanvasAssignment(s), added ${canvasEvents[date].assignments.length} new CanvasAssignment(s)`);
         });
         
         console.log('📊 Merged Canvas events into googleEvents state');
         
         // Debug logging after Canvas merge
         console.log('📊 googleEvents state after Canvas merge:', JSON.stringify(mergedEvents, null, 2));
+        console.log('📊 Total dates with events after Canvas merge:', Object.keys(mergedEvents).length);
+        console.log('📊 Total events across all dates after Canvas merge:', Object.values(mergedEvents).reduce((total, dayEvents) => total + (dayEvents.assignments?.length || 0), 0));
+        
+        // Log summary to confirm no duplicates
+        const totalCanvasEvents = Object.values(mergedEvents).reduce((total, dayEvents) => {
+          return total + (dayEvents.assignments?.filter(event => event.type === 'CanvasAssignment').length || 0);
+        }, 0);
+        console.log(`📊 Summary: Total CanvasAssignment items after merge: ${totalCanvasEvents} (should equal ${canvasAssignmentCount})`);
         
         return mergedEvents;
       });
@@ -991,22 +1340,40 @@ export default function App() {
     let totalGoogleEvents = 0;
 
     console.log('📅 Rendering calendar - analyzing events for marking...');
+    console.log('📊 googleEvents state:', JSON.stringify(googleEvents, null, 2));
 
     // Analyze each date in googleEvents to determine visual markers
     Object.keys(googleEvents).forEach(date => {
       const dayEvents = googleEvents[date]?.assignments || [];
       
-      // Check what types of events exist on this date
-      const hasGoogleEvents = dayEvents.some(event => event.type === 'google');
-      const hasGoogleAppsScriptEvents = dayEvents.some(event => event.type === 'GoogleEvent');
-      const hasCanvasAssignments = dayEvents.some(event => event.type === 'CanvasAssignment');
-      const hasManualAssignments = dayEvents.some(event => event.type === 'assignment');
+      console.log(`📅 Processing date ${date}: ${dayEvents.length} events`);
+      
+      // Collect all assignments (manual + Canvas + Google) for this date
+      const allAssignments = dayEvents.filter(event => 
+        event.type === 'assignment' || 
+        event.type === 'CanvasAssignment' || 
+        event.type === 'google' || 
+        event.type === 'GoogleEvent'
+      );
+      
+      if (allAssignments.length === 0) {
+        console.log(`📅 No assignments found for date ${date}`);
+        return;
+      }
       
       // Count events by type for logging and processing
       const assignmentCount = dayEvents.filter(event => event.type === 'assignment').length;
       const googleEventCount = dayEvents.filter(event => event.type === 'google').length;
       const googleAppsScriptEventCount = dayEvents.filter(event => event.type === 'GoogleEvent').length;
       const canvasAssignmentCount = dayEvents.filter(event => event.type === 'CanvasAssignment').length;
+      
+      // Debug log for event type breakdown
+      console.log(`🛠 Date ${date} breakdown:`, {
+        google: googleEventCount,
+        canvas: canvasAssignmentCount,
+        manual: assignmentCount,
+        appsScript: googleAppsScriptEventCount
+      });
       
       totalAssignments += assignmentCount;
       totalGoogleEvents += googleEventCount + googleAppsScriptEventCount + canvasAssignmentCount;
@@ -1028,146 +1395,53 @@ export default function App() {
           dayEvents.filter(event => event.type === 'CanvasAssignment').map(c => c.title));
       }
 
-      if (hasGoogleEvents && hasManualAssignments) {
-        // Both Google Calendar events and manual assignments
-        marked[date] = {
-          marked: true,
-          dots: [
-            { key: 'google', color: '#2196f3' },
-            { key: 'assignment', color: '#ff6b6b' }
-          ],
-          customStyles: {
-            container: {
-              backgroundColor: '#e3f2fd',
-              borderRadius: 8,
-            },
-            text: {
-              color: '#1976d2',
-              fontWeight: 'bold',
-            },
-          },
-        };
-      } else if (hasGoogleAppsScriptEvents && hasManualAssignments) {
-        // Both Google Apps Script events and manual assignments
-        const googleAppsScriptEvents = dayEvents.filter(event => event.type === 'GoogleEvent');
-        const primaryColor = googleAppsScriptEvents[0]?.dotColor || '#9e9e9e';
+      // Create dots array with proper colors for each assignment type
+      const dots = [];
+      const seenTypes = new Set();
+      
+      allAssignments.forEach(event => {
+        let dotColor = event.dotColor;
         
-        marked[date] = {
-          marked: true,
-          dots: [
-            { key: 'googleAppsScript', color: primaryColor },
-            { key: 'assignment', color: '#ff6b6b' }
-          ],
-          customStyles: {
-            container: {
-              backgroundColor: primaryColor + '20',
-              borderRadius: 8,
-            },
-            text: {
-              color: primaryColor,
-              fontWeight: 'bold',
-            },
-          },
-        };
-      } else if (hasGoogleEvents) {
-        // Only Google Calendar events
-        marked[date] = {
-          marked: true,
-          dotColor: '#2196f3',
-          customStyles: {
-            container: {
-              backgroundColor: '#e3f2fd',
-              borderRadius: 8,
-            },
-            text: {
-              color: '#1976d2',
-              fontWeight: 'bold',
-            },
-          },
-        };
-      } else if (hasGoogleAppsScriptEvents) {
-        // Only Google Apps Script events - use category colors
-        const googleAppsScriptEvents = dayEvents.filter(event => event.type === 'GoogleEvent');
-        const primaryCategory = googleAppsScriptEvents[0]?.category || 'Other';
-        const primaryColor = googleAppsScriptEvents[0]?.dotColor || '#9e9e9e';
+        // Determine dot color based on event type
+        if (event.type === 'assignment') {
+          // Manual assignments use priority-based colors
+          dotColor = priorityColors[event.priority] || '#ff6b6b';
+        } else if (event.type === 'CanvasAssignment') {
+          dotColor = '#ff9800'; // Orange for Canvas assignments
+        } else if (event.type === 'google') {
+          dotColor = '#2196f3'; // Blue for Google Calendar events
+        } else if (event.type === 'GoogleEvent') {
+          dotColor = event.dotColor || '#2196f3'; // Use event's dotColor or default blue
+        }
         
+        // Only add unique dot colors to avoid duplicates
+        if (!seenTypes.has(dotColor)) {
+          dots.push({ 
+            key: `${event.type}-${dotColor}`, 
+            color: dotColor 
+          });
+          seenTypes.add(dotColor);
+        }
+      });
+      
+      // Create marked date configuration
+      if (dots.length > 0) {
         marked[date] = {
           marked: true,
-          dotColor: primaryColor,
+          dots: dots,
           customStyles: {
             container: {
-              backgroundColor: primaryColor + '20', // Add transparency
+              backgroundColor: dots[0].color + '20', // Use first dot color with transparency
               borderRadius: 8,
             },
             text: {
-              color: primaryColor,
+              color: dots[0].color,
               fontWeight: 'bold',
             },
           },
         };
-      } else if (hasCanvasAssignments && hasManualAssignments) {
-        // Both Canvas assignments and manual assignments
-        const canvasEvents = dayEvents.filter(event => event.type === 'CanvasAssignment');
-        const canvasColor = canvasEvents[0]?.dotColor || '#ff9800';
         
-        marked[date] = {
-          marked: true,
-          dots: [
-            { key: 'canvas', color: canvasColor },
-            { key: 'assignment', color: '#ff6b6b' }
-          ],
-          customStyles: {
-            container: {
-              backgroundColor: canvasColor + '20',
-              borderRadius: 8,
-            },
-            text: {
-              color: canvasColor,
-              fontWeight: 'bold',
-            },
-          },
-        };
-      } else if (hasCanvasAssignments) {
-        // Only Canvas assignments
-        const canvasEvents = dayEvents.filter(event => event.type === 'CanvasAssignment');
-        const canvasColor = canvasEvents[0]?.dotColor || '#ff9800';
-        
-        marked[date] = {
-          marked: true,
-          dotColor: canvasColor,
-          customStyles: {
-            container: {
-              backgroundColor: canvasColor + '20',
-              borderRadius: 8,
-            },
-            text: {
-              color: canvasColor,
-              fontWeight: 'bold',
-            },
-          },
-        };
-      } else if (hasManualAssignments) {
-        // Only manual assignments - use priority color
-        const assignments = dayEvents.filter(event => event.type === 'assignment');
-        const highestPriority = assignments.reduce((highest, assignment) => {
-          const priorityOrder = { High: 3, Medium: 2, Low: 1 };
-          return priorityOrder[assignment.priority] > priorityOrder[highest] ? assignment.priority : highest;
-        }, 'Low');
-        
-        marked[date] = {
-          marked: true,
-          dotColor: priorityColors[highestPriority],
-          customStyles: {
-            container: {
-              backgroundColor: priorityColors[highestPriority] + '20', // Add transparency
-              borderRadius: 8,
-            },
-            text: {
-              color: priorityColors[highestPriority],
-              fontWeight: 'bold',
-            },
-          },
-        };
+        console.log(`🎨 Marked date ${date} with ${dots.length} dot(s):`, dots.map(d => d.color));
       }
     });
 
@@ -1183,6 +1457,7 @@ export default function App() {
 
     console.log(`📊 Calendar summary: ${totalAssignments} total assignments, ${totalGoogleEvents} total Google events`);
     console.log(`🎨 Marked ${Object.keys(marked).length} dates with events`);
+    console.log('📊 Final marked dates:', JSON.stringify(marked, null, 2));
 
     return marked;
   };
@@ -1351,6 +1626,7 @@ export default function App() {
       completed: false,
       priority: newAssignment.priority,
       dotColorByPriority: priorityColors[newAssignment.priority],
+      dotColor: priorityColors[newAssignment.priority], // Add dotColor for calendar display
       id: Date.now(), // Add unique ID for tracking
       notificationIds: [] // Will be populated after scheduling
     };
@@ -1413,6 +1689,7 @@ export default function App() {
           style={[styles.addButton, styles.refreshButton]}
           onPress={() => {
             console.log('🔄 Refresh Calendar & Canvas button clicked');
+            fetchGoogleEvents();
             fetchGoogleCalendarEventsData();
             fetchCanvasEvents();
           }}
